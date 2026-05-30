@@ -19,16 +19,16 @@ this project would not be possible. Full attributions are listed under
 [References](#references).
 
 ## Overview
-
 Ephemerust is an accessible, **teaching-grade** astrodynamics library and CLI for Rust — in
 spirit, the Rust counterpart to Python's [Skyfield](https://rhodesmill.org/skyfield/). It
 deliberately occupies the middle ground between raw numerical engines (such as the
 [sgp4](https://crates.io/crates/sgp4) crate) and ultra-high-fidelity mission toolkits (such as
 [nyx-space](https://crates.io/crates/nyx-space)): it provides ergonomic, thoroughly documented
 wrappers around the messy parts — time systems, coordinate-frame conversions, and planetary
-theory — so that tracking a satellite or locating a planet does not require a graduate course
-first. Every public item documents the physical reasoning alongside the code, and errors are
-written to teach (see the structured TLE diagnostics).
+theory — so that tracking a satellite or locating a planet Can be an exploratory process. 
+I personally believe that learning is significantly boosted when you have the tool(s) needed
+to play and hands on dive into your curiousity. Every public item documents the 
+physical reasoning alongside the code, and errors are written to hopefully teach (see the structured TLE diagnostics).
 
 The current development focus extends the project into **satellite tracking and pass
 prediction** — taking a Two-Line Element set (TLE) through SGP4 propagation to ground tracks,

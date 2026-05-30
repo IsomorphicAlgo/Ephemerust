@@ -14,6 +14,16 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
 
 ### Added
 
+- **Documentation alignment** — added thorough Rustdoc to every public item across `lib.rs`,
+  `time.rs`, `coordinates.rs`, `celestial.rs`, `orbital.rs`, `planets.rs`, and `satellite.rs`,
+  each with a runnable example and the physical reasoning behind it (why SGP4 output is in the
+  TEME frame, why sidereal time bridges Earth-fixed and inertial frames, why the horizon
+  corrections differ for point sources versus the Sun/Moon, and so on). Added a crate-level
+  overview positioning Ephemerust as a teaching-grade wrapper between the `sgp4` engine and
+  full mission toolkits, enabled `#![warn(missing_docs)]` to keep the public surface
+  documented, and made `cargo clippy --all-targets` and `cargo doc` clean. Doctests grew from
+  6 to 19. Renamed `Planet::from_str` to `Planet::from_name` to avoid confusion with the
+  `std::str::FromStr` trait.
 - **Educational error handling** — introduced a structured `satellite::TleError` enum whose
   every variant explains *what was expected*, *what was found*, and *the underlying rule* of
   the fixed-column TLE format (wrong line count, non-ASCII, short line, wrong line number,

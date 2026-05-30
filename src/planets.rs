@@ -1,3 +1,20 @@
+//! Planetary positions from [VSOP87](https://en.wikipedia.org/wiki/VSOP_(planets)) theory.
+//!
+//! VSOP87 represents each planet's heliocentric ecliptic longitude, latitude, and radius as
+//! large trigonometric series in time. This module stores **truncated** series (the
+//! largest-amplitude terms) as compile-time constants, evaluates them, and converts the
+//! heliocentric result to the geocentric equatorial [`RaDec`] an observer on Earth would
+//! measure — which is why Earth's own series is needed even though we never report Earth's
+//! position. Truncation trades a little accuracy (roughly arcminute-level; see
+//! `docs/accuracy-and-limits.md`) for compactness and speed.
+
+// The VSOP87 series coefficients in this module are transcribed verbatim from the published
+// theory. They carry more significant digits than an `f64` can store
+// (clippy::excessive_precision) and a few values coincidentally fall near π
+// (clippy::approx_constant); both are properties of the reference data, not mistakes, so these
+// lints are silenced module-wide.
+#![allow(clippy::excessive_precision, clippy::approx_constant)]
+
 use crate::Result;
 use crate::coordinates::RaDec;
 
@@ -8,13 +25,22 @@ use crate::coordinates::RaDec;
 /// from Earth's perspective (use geocentric calculations instead).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Planet {
+    /// Mercury, the innermost planet.
     Mercury,
+    /// Venus.
     Venus,
+    /// Earth — included because its heliocentric position is required for the geocentric
+    /// conversion of the other planets.
     Earth,
+    /// Mars.
     Mars,
+    /// Jupiter.
     Jupiter,
+    /// Saturn.
     Saturn,
+    /// Uranus.
     Uranus,
+    /// Neptune, the outermost major planet.
     Neptune,
 }
 
@@ -33,8 +59,18 @@ impl Planet {
         }
     }
 
-    /// Parses a planet name from a string (case-insensitive).
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// Parses a planet name from a string (case-insensitive), returning `None` for an
+    /// unrecognized name.
+    ///
+    /// Named `from_name` rather than `from_str` so as not to be confused with the
+    /// [`std::str::FromStr`] trait, which returns a `Result` rather than an `Option`.
+    ///
+    /// ```
+    /// use ephemerust::planets::Planet;
+    /// assert_eq!(Planet::from_name("JUPITER"), Some(Planet::Jupiter));
+    /// assert_eq!(Planet::from_name("Pluto"), None);
+    /// ```
+    pub fn from_name(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "mercury" => Some(Planet::Mercury),
             "venus" => Some(Planet::Venus),
@@ -178,7 +214,7 @@ pub fn calculate_planet_position(planet: Planet, julian_date: f64) -> Result<RaD
     // Valid range: approximately 2000 BC to 3000 AD (JD ~1721424 to ~2817152)
     const MIN_JD: f64 = 1000000.0; // ~-2000 BC
     const MAX_JD: f64 = 3000000.0; // ~3000 AD
-    if julian_date < MIN_JD || julian_date > MAX_JD {
+    if !(MIN_JD..=MAX_JD).contains(&julian_date) {
         warn!("Julian Date {} is outside recommended range [{:.0}, {:.0}]. Results may be inaccurate.",
               julian_date, MIN_JD, MAX_JD);
     }
@@ -1193,9 +1229,9 @@ mod tests {
 
     #[test]
     fn test_planet_from_str() {
-        assert_eq!(Planet::from_str("mercury"), Some(Planet::Mercury));
-        assert_eq!(Planet::from_str("JUPITER"), Some(Planet::Jupiter));
-        assert_eq!(Planet::from_str("invalid"), None);
+        assert_eq!(Planet::from_name("mercury"), Some(Planet::Mercury));
+        assert_eq!(Planet::from_name("JUPITER"), Some(Planet::Jupiter));
+        assert_eq!(Planet::from_name("invalid"), None);
     }
 
     #[test]
@@ -1331,18 +1367,20 @@ mod tests {
         // May succeed if Earth data is available, or fail if Earth data is placeholder
         let result_valid = calculate_planet_position(Planet::Mercury, jd);
         
-        if result_valid.is_ok() {
+        match result_valid {
             // If successful, verify RA/Dec are in valid ranges
-            let ra_dec = result_valid.unwrap();
-            assert!(ra_dec.ra >= 0.0 && ra_dec.ra < 24.0,
-                    "RA should be in [0, 24) hours");
-            assert!(ra_dec.dec >= -90.0 && ra_dec.dec <= 90.0,
-                    "Dec should be in [-90, 90] degrees");
-        } else {
+            Ok(ra_dec) => {
+                assert!((0.0..24.0).contains(&ra_dec.ra),
+                        "RA should be in [0, 24) hours");
+                assert!((-90.0..=90.0).contains(&ra_dec.dec),
+                        "Dec should be in [-90, 90] degrees");
+            }
             // If it fails, should be because Earth data is not available
-            let error_msg = result_valid.unwrap_err().to_string();
-            assert!(error_msg.contains("Earth") || error_msg.contains("VSOP87"),
-                    "Error should mention Earth or VSOP87 data: {}", error_msg);
+            Err(err) => {
+                let error_msg = err.to_string();
+                assert!(error_msg.contains("Earth") || error_msg.contains("VSOP87"),
+                        "Error should mention Earth or VSOP87 data: {}", error_msg);
+            }
         }
     }
 
@@ -1416,7 +1454,7 @@ mod tests {
         // Result = 0.0 + 0.5*(π/2)*(-1.0)
         let t_pi2 = std::f64::consts::PI / 2.0;
         let result_t_pi2 = evaluate_vsop87_series(&trig_series, t_pi2);
-        let expected = 0.0 + 0.5 * t_pi2 * (-1.0);
+        let expected = -0.5 * t_pi2;
         assert!((result_t_pi2 - expected).abs() < 1e-10,
                 "Trigonometric series at t=π/2 should be correct");
     }
@@ -1488,10 +1526,11 @@ mod tests {
         // Verify positions are different (Mercury moves in its orbit)
         // Longitude should change significantly over 1 century
         let lon_diff = (pos_plus1.longitude - pos_j2000.longitude).abs();
-        // Over 1 century, Mercury completes many orbits, so longitude should change significantly
-        // Account for wrapping: either large change or small change (wrapped around)
-        assert!(lon_diff > 0.1 || lon_diff < 0.1 || (2.0 * std::f64::consts::PI - lon_diff) < 0.1,
-                "Mercury longitude should change over 1 century");
+        // Over 1 century Mercury completes hundreds of orbits, so the wrapped longitude
+        // difference is effectively arbitrary; this simply confirms the evaluation produced a
+        // finite, usable value at both epochs.
+        assert!(lon_diff.is_finite(),
+                "Mercury longitude difference over 1 century should be finite, got {lon_diff}");
     }
 
     #[test]
@@ -1798,19 +1837,20 @@ mod tests {
         
         // If Earth data is available, should succeed
         // If Earth data is placeholder, will fail gracefully
-        if result.is_ok() {
-            let ra_dec = result.unwrap();
-            
-            // Verify RA/Dec are in valid ranges
-            assert!(ra_dec.ra >= 0.0 && ra_dec.ra < 24.0,
-                    "RA should be in [0, 24) hours, got {}", ra_dec.ra);
-            assert!(ra_dec.dec >= -90.0 && ra_dec.dec <= 90.0,
-                    "Dec should be in [-90, 90] degrees, got {}", ra_dec.dec);
-        } else {
+        match result {
+            Ok(ra_dec) => {
+                // Verify RA/Dec are in valid ranges
+                assert!((0.0..24.0).contains(&ra_dec.ra),
+                        "RA should be in [0, 24) hours, got {}", ra_dec.ra);
+                assert!((-90.0..=90.0).contains(&ra_dec.dec),
+                        "Dec should be in [-90, 90] degrees, got {}", ra_dec.dec);
+            }
             // If it fails, it should be because Earth data is not available
-            let error_msg = result.unwrap_err().to_string();
-            assert!(error_msg.contains("Earth") || error_msg.contains("VSOP87"),
-                    "Error should mention Earth or VSOP87 data");
+            Err(err) => {
+                let error_msg = err.to_string();
+                assert!(error_msg.contains("Earth") || error_msg.contains("VSOP87"),
+                        "Error should mention Earth or VSOP87 data");
+            }
         }
     }
 

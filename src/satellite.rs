@@ -21,10 +21,12 @@
 //! - Positions are kilometres, velocities kilometres per second, angles degrees, and times
 //!   UTC unless stated otherwise.
 //!
-//! The staged implementation plan lives in `docs/satellite-tracking-plan.md`. This module is
-//! currently at **Milestone 1** (TLE ingestion & parsing): [`Tle`] parses and validates
-//! 2- and 3-line element sets, exposing the catalog number, epoch, and orbital elements.
-//! Propagation (Milestone 2) and later stages remain stubs.
+//! The staged implementation plan lives in `docs/satellite-tracking-plan.md`. Implemented so
+//! far: [`Tle`] parses and validates 2- and 3-line element sets (with structured, educational
+//! [`TleError`]s), and [`propagate`] takes a parsed element set to a [`TemeState`] via the
+//! `sgp4` engine. Frame conversions, observer look angles, and pass prediction are the
+//! subsequent milestones; their types ([`Subpoint`], [`LookAngles`], [`Pass`]) are defined but
+//! not yet populated.
 //!
 //! # Example
 //!
@@ -591,6 +593,26 @@ fn parse_epoch(two_digit_year: u32, day_of_year: f64) -> std::result::Result<Dat
 /// invalid epoch constants, if the target time is too far from the epoch to represent
 /// (nanosecond overflow), or if the propagation itself diverges (for example, a decayed
 /// orbit or an eccentricity driven out of range).
+///
+/// # Example
+///
+/// Propagate the ISS to its own element-set epoch and confirm a plausible low-Earth-orbit
+/// radius (~6,800 km from the geocenter):
+///
+/// ```
+/// use ephemerust::satellite::{Tle, propagate};
+///
+/// let tle = Tle::parse(
+///     "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992\n\
+///      2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008",
+/// )
+/// .unwrap();
+///
+/// let state = propagate(&tle, tle.epoch).unwrap();
+/// let r = state.position_km;
+/// let radius = (r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).sqrt();
+/// assert!((6_600.0..=7_100.0).contains(&radius));
+/// ```
 pub fn propagate(tle: &Tle, time: DateTime<Utc>) -> Result<TemeState> {
     let elements = sgp4::Elements::from_tle(
         tle.name.clone(),
@@ -837,12 +859,12 @@ mod tests {
             .unwrap();
 
         let expected_r = [7022.46529266, -1400.08296755, 0.03995155];
-        for i in 0..3 {
+        for (axis, (actual, expected)) in
+            prediction.position.iter().zip(expected_r.iter()).enumerate()
+        {
             assert!(
-                (prediction.position[i] - expected_r[i]).abs() < 1e-3,
-                "AFSPC position[{i}]: {} vs reference {}",
-                prediction.position[i],
-                expected_r[i]
+                (actual - expected).abs() < 1e-3,
+                "AFSPC position[{axis}]: {actual} vs reference {expected}"
             );
         }
     }

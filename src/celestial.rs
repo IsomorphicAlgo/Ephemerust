@@ -1,26 +1,77 @@
+//! Positions and rise/set times for the Sun, Moon, and planets.
+//!
+//! This module is the high-level dispatch point for "where is this body, and when does it
+//! rise and set?". The Sun and Moon use built-in low-precision models; planets are routed to
+//! the VSOP87 implementation in [`crate::planets`]. Rise/set times are derived from the body's
+//! equatorial position and the observer's location using the hour-angle method, with a
+//! per-body horizon correction for atmospheric refraction (and, for the Sun and Moon, their
+//! angular size).
+
 use crate::Result;
 use chrono::{DateTime, Utc};
 
+/// A celestial body whose position or rise/set time can be computed.
 #[derive(Debug, Clone, Copy)]
 pub enum CelestialObject {
+    /// The Sun.
     Sun,
+    /// The Moon.
     Moon,
+    /// One of the major planets (see [`crate::planets::Planet`]).
     Planet(crate::planets::Planet),
 }
 
+/// An observer's position on the Earth's surface.
 #[derive(Debug, Clone, Copy)]
 pub struct ObserverLocation {
+    /// Geodetic latitude in degrees, positive north.
     pub latitude: f64,
+    /// Geodetic longitude in degrees, positive east.
     pub longitude: f64,
+    /// Height above sea level in metres (currently informational; not used in the rise/set
+    /// horizon model).
     pub elevation: f64,
 }
 
+/// The rise and set times of a body on a given date.
+///
+/// Each field is `None` when the body does not cross the horizon that day — either because it
+/// is circumpolar (always up) or never rises at the observer's latitude.
 #[derive(Debug, Clone, Copy)]
 pub struct RiseSetTimes {
+    /// UTC time the body rises above the horizon, or `None` if it does not rise/set that day.
     pub rise: Option<DateTime<Utc>>,
+    /// UTC time the body sets below the horizon, or `None` if it does not rise/set that day.
     pub set: Option<DateTime<Utc>>,
 }
 
+/// Computes the rise and set times of a celestial object for an observer on a given date
+/// (UTC).
+///
+/// Dispatches to the appropriate model for the Sun, Moon, or a planet. The returned times use
+/// the hour-angle method with a body-specific horizon correction (atmospheric refraction, plus
+/// angular radius for the Sun and Moon).
+///
+/// # Errors
+///
+/// Returns an error if the underlying position calculation fails (for example, missing planet
+/// data). A body that simply never rises or sets that day is **not** an error — it yields
+/// `None` fields instead.
+///
+/// # Example
+///
+/// ```no_run
+/// use chrono::{TimeZone, Utc};
+/// use ephemerust::celestial::{CelestialObject, ObserverLocation, calculate_rise_set_times};
+///
+/// let seattle = ObserverLocation { latitude: 47.6, longitude: -122.3, elevation: 0.0 };
+/// let date = Utc.with_ymd_and_hms(2024, 12, 25, 0, 0, 0).unwrap();
+/// let times = calculate_rise_set_times(CelestialObject::Sun, seattle, date)?;
+/// if let Some(sunrise) = times.rise {
+///     println!("Sunrise: {}", sunrise.format("%H:%M:%S UTC"));
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn calculate_rise_set_times(
     object: CelestialObject,
     location: ObserverLocation,
@@ -113,6 +164,30 @@ fn calculate_planet_rise_set(
     Ok(rise_set_from_position(planet_pos, location, date, -0.5667))
 }
 
+/// Computes the geocentric equatorial position ([`RaDec`](crate::coordinates::RaDec)) of a
+/// celestial object at a given UTC instant.
+///
+/// Dispatches to the Sun model, the Moon model, or the VSOP87 planetary theory as appropriate.
+/// The result is right ascension (hours) and declination (degrees) referred to the equator and
+/// equinox of date, without precession/nutation corrections.
+///
+/// # Errors
+///
+/// Returns an error if the underlying position model fails (for example, unavailable planet
+/// data or an invalid time argument).
+///
+/// # Example
+///
+/// ```no_run
+/// use chrono::{TimeZone, Utc};
+/// use ephemerust::celestial::{CelestialObject, calculate_position};
+/// use ephemerust::planets::Planet;
+///
+/// let t = Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+/// let pos = calculate_position(CelestialObject::Planet(Planet::Jupiter), t)?;
+/// println!("Jupiter: RA={:.3} h, Dec={:.3}°", pos.ra, pos.dec);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn calculate_position(object: CelestialObject, date: DateTime<Utc>) -> Result<crate::coordinates::RaDec> {
     match object {
         CelestialObject::Sun => calculate_solar_position(date),

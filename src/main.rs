@@ -422,7 +422,7 @@ fn parse_celestial_object(object_name: &str) -> Result<ephemerust::celestial::Ce
         "moon" => Ok(ephemerust::celestial::CelestialObject::Moon),
         planet_name => {
             // Try to parse as a planet
-            if let Some(planet) = ephemerust::planets::Planet::from_str(planet_name) {
+            if let Some(planet) = ephemerust::planets::Planet::from_name(planet_name) {
                 Ok(ephemerust::celestial::CelestialObject::Planet(planet))
             } else {
                 Err(ephemerust::AstroError::InvalidCoordinate(

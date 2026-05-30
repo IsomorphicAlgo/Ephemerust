@@ -8,20 +8,24 @@ astronomy toolset, and a study project in Rust and applied astrophysics.
 
 ## Overview
 
-Ephemerust implements the time systems, coordinate frames, and orbital calculations
-used in space-mission operations and satellite control. It serves a dual purpose: a dependable
-astronomy toolset, and a transparent, well-documented reference implementation of applied
-astrodynamics for the Rust ecosystem.
+Ephemerust is an accessible, **teaching-grade** astrodynamics library and CLI for Rust — in
+spirit, the Rust counterpart to Python's [Skyfield](https://rhodesmill.org/skyfield/). It
+deliberately occupies the middle ground between raw numerical engines (such as the
+[sgp4](https://crates.io/crates/sgp4) crate) and ultra-high-fidelity mission toolkits (such as
+[nyx-space](https://crates.io/crates/nyx-space)): it provides ergonomic, thoroughly documented
+wrappers around the messy parts — time systems, coordinate-frame conversions, and planetary
+theory — so that tracking a satellite or locating a planet does not require a graduate course
+first. Every public item documents the physical reasoning alongside the code, and errors are
+written to teach (see the structured TLE diagnostics).
 
 The current development focus extends the project into **satellite tracking and pass
 prediction** — taking a Two-Line Element set (TLE) through SGP4 propagation to ground tracks,
 observer look angles, and visible-pass predictions. The work follows a **library-first**
-design: the production propagator is provided by the validated `[sgp4](https://crates.io/crates/sgp4)`
-crate, while this project supplies the conversion and prediction layer that the raw
-propagator omits (TEME → ECEF → geodetic → topocentric → passes), documented to the same
-standard as the rest of the codebase. The goal is twofold — a dependable tracking tool, and
-the well-documented, teaching-grade astrodynamics library that the Rust ecosystem currently
-lacks. The staged plan lives in the [satellite-tracking plan](docs/satellite-tracking-plan.md).
+design: the production propagator is provided by the validated
+[sgp4](https://crates.io/crates/sgp4) crate, while this project supplies the conversion and
+prediction layer that the raw propagator omits (TEME → ECEF → geodetic → topocentric →
+passes), documented to the same standard as the rest of the codebase. The staged plan lives in
+the [satellite-tracking plan](docs/satellite-tracking-plan.md).
 
 The project is structured in two phases:
 
@@ -51,7 +55,7 @@ The project is structured in two phases:
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (89 unit + 2 CLI integration + 6 doctests)
+cargo test             # run the test suite (89 unit + 2 CLI integration + 19 doctests)
 cargo run -- --help    # list all commands
 ```
 

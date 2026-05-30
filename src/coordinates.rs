@@ -1,14 +1,42 @@
+//! Coordinate systems and the transforms between them.
+//!
+//! Astronomy uses several coordinate frames, each convenient for a different purpose, and much
+//! of practical work is converting between them. This module covers two pairs:
+//!
+//! - **Equatorial ([`RaDec`]) ↔ horizontal ([`AltAz`])** — where an object is on the celestial
+//!   sphere versus where it appears in *your* local sky. The link between them is the
+//!   observer's latitude and local sidereal time.
+//! - **Earth-fixed ([`Ecef`]) ↔ inertial ([`Eci`])** — a frame that rotates with the Earth
+//!   versus one fixed against the stars. The link is the Earth's rotation angle (GMST).
+//!
+//! No precession or nutation corrections are applied, so accuracy is at the arcminute level —
+//! see `docs/accuracy-and-limits.md`.
+
 use crate::Result;
 
+/// Equatorial coordinates: a position on the celestial sphere, independent of the observer.
+///
+/// This is the "where is it among the stars" frame, analogous to latitude/longitude projected
+/// onto the sky.
 #[derive(Debug, Clone, Copy)]
 pub struct RaDec {
+    /// Right ascension in **hours** `[0, 24)`: the celestial analogue of longitude, measured
+    /// eastward from the vernal equinox.
     pub ra: f64,
+    /// Declination in **degrees** `[-90, +90]`: the celestial analogue of latitude, measured
+    /// from the celestial equator.
     pub dec: f64,
 }
 
+/// Horizontal (topocentric) coordinates: where an object appears in the observer's local sky.
+///
+/// Unlike [`RaDec`], these depend on the observer's location and the time of observation.
 #[derive(Debug, Clone, Copy)]
 pub struct AltAz {
+    /// Altitude in **degrees** `[-90, +90]`: angular height above the horizon (negative is
+    /// below the horizon).
     pub alt: f64,
+    /// Azimuth in **degrees** `[0, 360)`: compass bearing measured clockwise from true north.
     pub az: f64,
 }
 
@@ -23,8 +51,11 @@ pub struct AltAz {
 /// Units: meters (typically)
 #[derive(Debug, Clone, Copy)]
 pub struct Ecef {
+    /// X coordinate (toward the equator/prime-meridian intersection), in metres.
     pub x: f64,
+    /// Y coordinate (toward the equator at 90°E), in metres.
     pub y: f64,
+    /// Z coordinate (toward the North Pole), in metres.
     pub z: f64,
 }
 
@@ -40,8 +71,11 @@ pub struct Ecef {
 /// Units: meters (typically)
 #[derive(Debug, Clone, Copy)]
 pub struct Eci {
+    /// X coordinate (toward the vernal equinox at the J2000.0 epoch), in metres.
     pub x: f64,
+    /// Y coordinate (completing the right-handed equatorial frame), in metres.
     pub y: f64,
+    /// Z coordinate (toward the North Pole), in metres.
     pub z: f64,
 }
 
@@ -667,10 +701,10 @@ mod tests {
         // Verify rotation matrix properties:
         // - Matrix is orthogonal (R^T = R^-1, i.e., R^T * R = I)
         // - Determinant = 1 (preserves volume/orientation)
-        let angles = [0.0, 45.0, 90.0, 180.0, 270.0, 360.0];
+        let angles: [f64; 6] = [0.0, 45.0, 90.0, 180.0, 270.0, 360.0];
         
         for angle_deg in angles.iter() {
-            let angle_rad = (*angle_deg as f64).to_radians();
+            let angle_rad = angle_deg.to_radians();
             let r = rotation_matrix_z(angle_rad);
             
             // Calculate determinant: det(R_z) = cos²(θ) + sin²(θ) = 1

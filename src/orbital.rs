@@ -1,21 +1,95 @@
+//! Classical (two-body Keplerian) orbital mechanics.
+//!
+//! This module works with the six [Keplerian orbital
+//! elements](https://en.wikipedia.org/wiki/Orbital_elements) — the compact description of an
+//! idealized two-body orbit — and converts them to and from the more directly usable position
+//! and velocity vectors. The model assumes a single central body and no perturbations (no
+//! drag, no oblateness, no third bodies), which is exact for the two-body problem and a good
+//! first approximation for short arcs. For Earth satellites where these perturbations matter,
+//! use the [`crate::satellite`] module's SGP4-based propagation instead.
+
 use crate::Result;
 
+/// The six classical [Keplerian orbital
+/// elements](https://en.wikipedia.org/wiki/Orbital_elements) that define a two-body orbit and
+/// the body's position along it.
+///
+/// The first two elements fix the orbit's size and shape; the next three orient the orbital
+/// plane in space; the last places the body on the orbit at a given instant. Angles are in
+/// degrees.
 #[derive(Debug, Clone, Copy)]
 pub struct OrbitalElements {
+    /// Semi-major axis `a`: half the long axis of the ellipse; sets the orbit's size (and,
+    /// via Kepler's third law, its period). Same length unit as the result (e.g. km).
     pub semi_major_axis: f64,
+    /// Eccentricity `e`: orbit shape, from `0` (circle) toward `1` (parabola). Dimensionless.
     pub eccentricity: f64,
+    /// Inclination `i` in degrees: tilt of the orbital plane relative to the reference
+    /// (equatorial) plane.
     pub inclination: f64,
+    /// Longitude of the ascending node `Ω` in degrees: where the orbit crosses the reference
+    /// plane going north, measured from the reference direction.
     pub longitude_ascending_node: f64,
+    /// Argument of periapsis `ω` in degrees: angle from the ascending node to periapsis,
+    /// measured in the orbital plane.
     pub argument_periapsis: f64,
+    /// Mean anomaly `M` in degrees: a *time-like* angle that increases uniformly and locates
+    /// the body on the orbit (see [`mean_to_true_anomaly`]).
     pub mean_anomaly: f64,
 }
 
+/// A Cartesian orbital state: position and velocity in the same inertial frame.
+///
+/// This is the alternative to [`OrbitalElements`] for describing an orbit — equivalent
+/// information, but expressed as vectors that can be propagated or transformed directly.
 #[derive(Debug, Clone, Copy)]
 pub struct StateVector {
+    /// Position vector `[x, y, z]` in the inertial frame (length unit matches the inputs,
+    /// e.g. km).
     pub position: [f64; 3],
+    /// Velocity vector `[vx, vy, vz]` in the inertial frame (e.g. km/s).
     pub velocity: [f64; 3],
 }
 
+/// Converts a set of [`OrbitalElements`] into a Cartesian [`StateVector`] (position and
+/// velocity) in the inertial frame.
+///
+/// The body is first placed in the *perifocal* frame (the orbital plane, with the x-axis
+/// toward periapsis) using the conic equation `r = a(1 − e²) / (1 + e·cos ν)`, then rotated
+/// into the inertial frame by the standard 3-1-3 sequence of `Ω`, `i`, and `ω`. The velocity
+/// follows from the conserved specific angular momentum `h = √(μ · a(1 − e²))`.
+///
+/// `gm` is the standard gravitational parameter `μ = G·M` of the central body, in units
+/// consistent with the elements (e.g. km³/s² with `a` in km gives km and km/s).
+///
+/// # Errors
+///
+/// Returns an error only via the [`Result`] contract; for valid two-body inputs the
+/// conversion is purely arithmetic.
+///
+/// # Example
+///
+/// ```
+/// use ephemerust::orbital::{OrbitalElements, elements_to_state_vector};
+///
+/// // A circular equatorial orbit at 7000 km, at periapsis (M = 0).
+/// let elements = OrbitalElements {
+///     semi_major_axis: 7000.0,
+///     eccentricity: 0.0,
+///     inclination: 0.0,
+///     longitude_ascending_node: 0.0,
+///     argument_periapsis: 0.0,
+///     mean_anomaly: 0.0,
+/// };
+/// let mu_earth = 398_600.4418; // km^3/s^2
+/// let state = elements_to_state_vector(elements, mu_earth).unwrap();
+///
+/// // At periapsis the body sits on the +x axis at r = a.
+/// assert!((state.position[0] - 7000.0).abs() < 1e-6);
+/// // Circular speed is sqrt(mu / r).
+/// let speed = (state.velocity.iter().map(|v| v * v).sum::<f64>()).sqrt();
+/// assert!((speed - (mu_earth / 7000.0).sqrt()).abs() < 1e-6);
+/// ```
 pub fn elements_to_state_vector(elements: OrbitalElements, gm: f64) -> Result<StateVector> {
     let true_anom_rad = mean_to_true_anomaly(elements.mean_anomaly, elements.eccentricity).to_radians();
     let (a, e) = (elements.semi_major_axis, elements.eccentricity);
@@ -55,11 +129,49 @@ pub fn elements_to_state_vector(elements: OrbitalElements, gm: f64) -> Result<St
     })
 }
 
+/// Computes the orbital period from [Kepler's third
+/// law](https://en.wikipedia.org/wiki/Kepler%27s_laws_of_planetary_motion), `T = 2π·√(a³/μ)`.
+///
+/// The period depends only on the semi-major axis and the central body's gravitational
+/// parameter — not on eccentricity — so all orbits with the same `a` share a period regardless
+/// of shape. The result's time unit follows the inputs (e.g. `a` in km and `μ` in km³/s² give
+/// seconds).
+///
+/// # Example
+///
+/// ```
+/// use ephemerust::orbital::orbital_period;
+///
+/// // A ~6780 km orbit around Earth completes in roughly 90 minutes.
+/// let period_s = orbital_period(6780.0, 398_600.0);
+/// assert!((period_s - 5400.0).abs() < 300.0);
+/// ```
 pub fn orbital_period(semi_major_axis: f64, gm: f64) -> f64 {
     use std::f64::consts::PI;
     2.0 * PI * (semi_major_axis.powi(3) / gm).sqrt()
 }
 
+/// Converts the **mean anomaly** to the **true anomaly** (both in degrees) for an elliptical
+/// orbit of the given eccentricity.
+///
+/// The mean anomaly `M` advances uniformly with time but is not a real geometric angle; the
+/// true anomaly `ν` is the actual angle from periapsis to the body. Bridging them requires
+/// solving [Kepler's equation](https://en.wikipedia.org/wiki/Kepler%27s_equation)
+/// `M = E − e·sin E` for the eccentric anomaly `E`, which has no closed-form solution. This
+/// uses Newton–Raphson iteration (seeded at `M`, or at `π` for high eccentricity to aid
+/// convergence) and then maps `E` to `ν`. The result is normalized to `[0, 360)`.
+///
+/// # Example
+///
+/// ```
+/// use ephemerust::orbital::mean_to_true_anomaly;
+///
+/// // For a circle (e = 0), mean and true anomaly coincide.
+/// assert!((mean_to_true_anomaly(45.0, 0.0) - 45.0).abs() < 1e-6);
+/// // For an eccentric orbit the body lingers near apoapsis, so at M = 90° the
+/// // true anomaly has already advanced well past 90°.
+/// assert!(mean_to_true_anomaly(90.0, 0.5) > 130.0);
+/// ```
 pub fn mean_to_true_anomaly(mean_anomaly: f64, eccentricity: f64) -> f64 {
     use std::f64::consts::PI;
     let m_rad = mean_anomaly.to_radians().rem_euclid(2.0 * PI);
@@ -144,7 +256,7 @@ mod tests {
         
         for mean_anom in test_cases {
             let true_anom = mean_to_true_anomaly(mean_anom, e);
-            assert!(true_anom >= 0.0 && true_anom < 360.0, 
+            assert!((0.0..360.0).contains(&true_anom), 
                     "True anomaly should be in range [0, 360), got {}", true_anom);
         }
     }

@@ -1,4 +1,4 @@
-# CLI Astro Calc — Documentation
+# Ephemerust — Documentation
 
 This folder is the "encyclopedia" for the project: the mathematics, conventions, and
 engineering behind each feature. The top-level [readme](../readme.md) is the quick-start

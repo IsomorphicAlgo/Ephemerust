@@ -3,7 +3,7 @@
 ## Project layout
 
 ```
-CLI_Astro_Calc/
+ephemerust/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── readme.md           # quick start + command reference

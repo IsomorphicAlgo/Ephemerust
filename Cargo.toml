@@ -1,12 +1,12 @@
 [package]
-name = "cli-astro-calc"
+name = "ephemerust"
 version = "0.2.0"
 edition = "2021"
 authors = ["MichaelHansen"]
-description = "A command-line astronomy and orbital mechanics calculator"
+description = "Astronomy, orbital-mechanics, and satellite-tracking toolkit and library, written in Rust"
 license = "MIT"
-repository = "https://github.com/IsomorphicAlgo/cli-astro-calc"
-keywords = ["astronomy", "orbital-mechanics", "cli", "calculations"]
+repository = "https://github.com/IsomorphicAlgo/ephemerust"
+keywords = ["astronomy", "orbital-mechanics", "satellite", "ephemeris", "sgp4"]
 categories = ["command-line-utilities", "science"]
 
 [dependencies]

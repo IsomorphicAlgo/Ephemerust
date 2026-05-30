@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand};
-use cli_astro_calc::Result;
+use ephemerust::Result;
 
-/// A command-line astronomy and orbital mechanics calculator
+/// Ephemerust — an astronomy, orbital-mechanics, and satellite-tracking toolkit in Rust
 #[derive(Parser)]
-#[command(name = "cli-astro-calc")]
-#[command(about = "An Astrological Calculator and exploration into RUST")]
+#[command(name = "ephemerust")]
+#[command(about = "Astronomy, orbital-mechanics, and satellite-tracking toolkit, written in Rust")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -124,7 +124,7 @@ fn main() -> Result<()> {
                     println!("Z: {:.3} m", result.z);
                 },
                 _ => {
-                    return Err(cli_astro_calc::AstroError::InvalidCoordinate(
+                    return Err(ephemerust::AstroError::InvalidCoordinate(
                         format!("Unsupported conversion: {} to {}", from, to)
                     ));
                 }
@@ -137,7 +137,7 @@ fn main() -> Result<()> {
                 chrono::Utc::now()
             };
             
-            let location = cli_astro_calc::celestial::ObserverLocation {
+            let location = ephemerust::celestial::ObserverLocation {
                 latitude,
                 longitude,
                 elevation: 0.0,
@@ -145,7 +145,7 @@ fn main() -> Result<()> {
             
             let obj = parse_celestial_object(&object)?;
             
-            let rise_set = cli_astro_calc::celestial::calculate_rise_set_times(obj, location, date_time)?;
+            let rise_set = ephemerust::celestial::calculate_rise_set_times(obj, location, date_time)?;
             
             match rise_set.rise {
                 Some(t) => println!("Rise: {}", t.format("%H:%M:%S UTC")),
@@ -160,7 +160,7 @@ fn main() -> Result<()> {
             let date_time = parse_date_time(&date, None)?;
             let obj = parse_celestial_object(&object)?;
             
-            let pos = cli_astro_calc::celestial::calculate_position(obj, date_time)?;
+            let pos = ephemerust::celestial::calculate_position(obj, date_time)?;
             let (ra_h, ra_m, ra_s) = format_time(pos.ra);
             let (dec_deg, dec_min, dec_sec, dec_sign) = format_angle(pos.dec);
             
@@ -169,15 +169,15 @@ fn main() -> Result<()> {
         },
         Commands::Time { date, time } => {
             let date_time = parse_date_time(&date, time.as_deref())?;
-            let jd = cli_astro_calc::time::julian_date(date_time);
-            let gmst = cli_astro_calc::time::greenwich_mean_sidereal_time(jd);
+            let jd = ephemerust::time::julian_date(date_time);
+            let gmst = ephemerust::time::greenwich_mean_sidereal_time(jd);
             let (h, m, s) = format_time(gmst);
             
             println!("JD:   {:.6}", jd);
             println!("GMST: {:02}:{:02}:{:02}", h, m, s);
         },
         Commands::Orbital { semi_major, eccentricity, inclination, raan, arg_periapsis, mean_anomaly, mu } => {
-            use cli_astro_calc::orbital::{OrbitalElements, orbital_period, mean_to_true_anomaly, elements_to_state_vector};
+            use ephemerust::orbital::{OrbitalElements, orbital_period, mean_to_true_anomaly, elements_to_state_vector};
 
             let elements = OrbitalElements {
                 semi_major_axis: semi_major,
@@ -203,13 +203,13 @@ fn main() -> Result<()> {
                 state.velocity[0], state.velocity[1], state.velocity[2]);
         },
         Commands::Track { tle_file, tle, latitude: _, longitude: _ } => {
-            use cli_astro_calc::satellite::Tle;
+            use ephemerust::satellite::Tle;
 
             let parsed = match (tle_file, tle) {
                 (Some(path), _) => Tle::from_file(&path)?,
                 (None, Some(text)) => Tle::parse(&text)?,
                 (None, None) => {
-                    return Err(cli_astro_calc::AstroError::SatelliteError(
+                    return Err(ephemerust::AstroError::SatelliteError(
                         "provide a TLE via --tle-file <path> or --tle \"<line1>\\n<line2>\"".to_string()
                     ));
                 }
@@ -226,7 +226,7 @@ fn main() -> Result<()> {
 ///
 /// Interim Milestone 1 output: propagation, look angles, passes, and ground tracks are
 /// added in later milestones (see docs/satellite-tracking-plan.md).
-fn print_tle_summary(tle: &cli_astro_calc::satellite::Tle) {
+fn print_tle_summary(tle: &ephemerust::satellite::Tle) {
     if let Some(name) = &tle.name {
         println!("Object:        {}", name);
     }
@@ -255,11 +255,11 @@ fn parse_date_time(date_str: &str, time_str: Option<&str>) -> Result<chrono::Dat
     use chrono::{DateTime, Utc, NaiveDate, NaiveTime};
     
     let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-        .map_err(|e| cli_astro_calc::AstroError::InvalidTime(format!("Invalid date: {}", e)))?;
+        .map_err(|e| ephemerust::AstroError::InvalidTime(format!("Invalid date: {}", e)))?;
     
     let time = if let Some(ts) = time_str {
         NaiveTime::parse_from_str(ts, "%H:%M:%S")
-            .map_err(|e| cli_astro_calc::AstroError::InvalidTime(format!("Invalid time: {}", e)))?
+            .map_err(|e| ephemerust::AstroError::InvalidTime(format!("Invalid time: {}", e)))?
     } else {
         NaiveTime::from_hms_opt(12, 0, 0).unwrap()
     };
@@ -282,19 +282,19 @@ fn format_angle(degrees: f64) -> (i32, i32, i32, &'static str) {
     (deg, min, sec, sign)
 }
 
-fn parse_and_convert_radec_to_altaz(coords: &str) -> Result<cli_astro_calc::coordinates::AltAz> {
-    use cli_astro_calc::coordinates::{RaDec, ra_dec_to_alt_az};
-    use cli_astro_calc::time::{julian_date, greenwich_mean_sidereal_time, local_sidereal_time};
+fn parse_and_convert_radec_to_altaz(coords: &str) -> Result<ephemerust::coordinates::AltAz> {
+    use ephemerust::coordinates::{RaDec, ra_dec_to_alt_az};
+    use ephemerust::time::{julian_date, greenwich_mean_sidereal_time, local_sidereal_time};
     
     let parts: Vec<&str> = coords.split(',').collect();
     if parts.len() != 2 {
-        return Err(cli_astro_calc::AstroError::InvalidCoordinate("Expected: hours,degrees".to_string()));
+        return Err(ephemerust::AstroError::InvalidCoordinate("Expected: hours,degrees".to_string()));
     }
     
     let ra: f64 = parts[0].trim().parse()
-        .map_err(|_| cli_astro_calc::AstroError::InvalidCoordinate("Invalid RA".to_string()))?;
+        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid RA".to_string()))?;
     let dec: f64 = parts[1].trim().parse()
-        .map_err(|_| cli_astro_calc::AstroError::InvalidCoordinate("Invalid Dec".to_string()))?;
+        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid Dec".to_string()))?;
     
     let jd = julian_date(chrono::Utc::now());
     let gmst = greenwich_mean_sidereal_time(jd);
@@ -304,19 +304,19 @@ fn parse_and_convert_radec_to_altaz(coords: &str) -> Result<cli_astro_calc::coor
     ra_dec_to_alt_az(RaDec { ra, dec }, lat, lon, lst)
 }
 
-fn parse_and_convert_altaz_to_radec(coords: &str) -> Result<cli_astro_calc::coordinates::RaDec> {
-    use cli_astro_calc::coordinates::{AltAz, alt_az_to_ra_dec};
-    use cli_astro_calc::time::{julian_date, greenwich_mean_sidereal_time, local_sidereal_time};
+fn parse_and_convert_altaz_to_radec(coords: &str) -> Result<ephemerust::coordinates::RaDec> {
+    use ephemerust::coordinates::{AltAz, alt_az_to_ra_dec};
+    use ephemerust::time::{julian_date, greenwich_mean_sidereal_time, local_sidereal_time};
     
     let parts: Vec<&str> = coords.split(',').collect();
     if parts.len() != 2 {
-        return Err(cli_astro_calc::AstroError::InvalidCoordinate("Expected: altitude,azimuth".to_string()));
+        return Err(ephemerust::AstroError::InvalidCoordinate("Expected: altitude,azimuth".to_string()));
     }
     
     let alt: f64 = parts[0].trim().parse()
-        .map_err(|_| cli_astro_calc::AstroError::InvalidCoordinate("Invalid altitude".to_string()))?;
+        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid altitude".to_string()))?;
     let az: f64 = parts[1].trim().parse()
-        .map_err(|_| cli_astro_calc::AstroError::InvalidCoordinate("Invalid azimuth".to_string()))?;
+        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid azimuth".to_string()))?;
     
     let jd = julian_date(chrono::Utc::now());
     let gmst = greenwich_mean_sidereal_time(jd);
@@ -326,21 +326,21 @@ fn parse_and_convert_altaz_to_radec(coords: &str) -> Result<cli_astro_calc::coor
     alt_az_to_ra_dec(AltAz { alt, az }, lat, lon, lst)
 }
 
-fn parse_and_convert_ecef_to_eci(coords: &str, gmst_opt: Option<f64>) -> Result<cli_astro_calc::coordinates::Eci> {
-    use cli_astro_calc::coordinates::{Ecef, ecef_to_eci};
-    use cli_astro_calc::time::{julian_date, greenwich_mean_sidereal_time};
+fn parse_and_convert_ecef_to_eci(coords: &str, gmst_opt: Option<f64>) -> Result<ephemerust::coordinates::Eci> {
+    use ephemerust::coordinates::{Ecef, ecef_to_eci};
+    use ephemerust::time::{julian_date, greenwich_mean_sidereal_time};
     
     let parts: Vec<&str> = coords.split(',').collect();
     if parts.len() != 3 {
-        return Err(cli_astro_calc::AstroError::InvalidCoordinate("Expected: x,y,z (in meters)".to_string()));
+        return Err(ephemerust::AstroError::InvalidCoordinate("Expected: x,y,z (in meters)".to_string()));
     }
     
     let x: f64 = parts[0].trim().parse()
-        .map_err(|_| cli_astro_calc::AstroError::InvalidCoordinate("Invalid x coordinate".to_string()))?;
+        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid x coordinate".to_string()))?;
     let y: f64 = parts[1].trim().parse()
-        .map_err(|_| cli_astro_calc::AstroError::InvalidCoordinate("Invalid y coordinate".to_string()))?;
+        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid y coordinate".to_string()))?;
     let z: f64 = parts[2].trim().parse()
-        .map_err(|_| cli_astro_calc::AstroError::InvalidCoordinate("Invalid z coordinate".to_string()))?;
+        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid z coordinate".to_string()))?;
     
     let gmst = if let Some(gmst_val) = gmst_opt {
         gmst_val
@@ -353,21 +353,21 @@ fn parse_and_convert_ecef_to_eci(coords: &str, gmst_opt: Option<f64>) -> Result<
     ecef_to_eci(Ecef { x, y, z }, gmst)
 }
 
-fn parse_and_convert_eci_to_ecef(coords: &str, gmst_opt: Option<f64>) -> Result<cli_astro_calc::coordinates::Ecef> {
-    use cli_astro_calc::coordinates::{Eci, eci_to_ecef};
-    use cli_astro_calc::time::{julian_date, greenwich_mean_sidereal_time};
+fn parse_and_convert_eci_to_ecef(coords: &str, gmst_opt: Option<f64>) -> Result<ephemerust::coordinates::Ecef> {
+    use ephemerust::coordinates::{Eci, eci_to_ecef};
+    use ephemerust::time::{julian_date, greenwich_mean_sidereal_time};
     
     let parts: Vec<&str> = coords.split(',').collect();
     if parts.len() != 3 {
-        return Err(cli_astro_calc::AstroError::InvalidCoordinate("Expected: x,y,z (in meters)".to_string()));
+        return Err(ephemerust::AstroError::InvalidCoordinate("Expected: x,y,z (in meters)".to_string()));
     }
     
     let x: f64 = parts[0].trim().parse()
-        .map_err(|_| cli_astro_calc::AstroError::InvalidCoordinate("Invalid x coordinate".to_string()))?;
+        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid x coordinate".to_string()))?;
     let y: f64 = parts[1].trim().parse()
-        .map_err(|_| cli_astro_calc::AstroError::InvalidCoordinate("Invalid y coordinate".to_string()))?;
+        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid y coordinate".to_string()))?;
     let z: f64 = parts[2].trim().parse()
-        .map_err(|_| cli_astro_calc::AstroError::InvalidCoordinate("Invalid z coordinate".to_string()))?;
+        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid z coordinate".to_string()))?;
     
     let gmst = if let Some(gmst_val) = gmst_opt {
         gmst_val
@@ -395,18 +395,18 @@ fn parse_and_convert_eci_to_ecef(coords: &str, gmst_opt: Option<f64>) -> Result<
 /// 
 /// # Errors
 /// Returns an error if the object name is not recognized
-fn parse_celestial_object(object_name: &str) -> Result<cli_astro_calc::celestial::CelestialObject> {
+fn parse_celestial_object(object_name: &str) -> Result<ephemerust::celestial::CelestialObject> {
     let obj_lower = object_name.to_lowercase();
     
     match obj_lower.as_str() {
-        "sun" => Ok(cli_astro_calc::celestial::CelestialObject::Sun),
-        "moon" => Ok(cli_astro_calc::celestial::CelestialObject::Moon),
+        "sun" => Ok(ephemerust::celestial::CelestialObject::Sun),
+        "moon" => Ok(ephemerust::celestial::CelestialObject::Moon),
         planet_name => {
             // Try to parse as a planet
-            if let Some(planet) = cli_astro_calc::planets::Planet::from_str(planet_name) {
-                Ok(cli_astro_calc::celestial::CelestialObject::Planet(planet))
+            if let Some(planet) = ephemerust::planets::Planet::from_str(planet_name) {
+                Ok(ephemerust::celestial::CelestialObject::Planet(planet))
             } else {
-                Err(cli_astro_calc::AstroError::InvalidCoordinate(
+                Err(ephemerust::AstroError::InvalidCoordinate(
                     format!("Unknown object: {}. Supported: sun, moon, mercury, venus, mars, jupiter, saturn, uranus, neptune", object_name)
                 ))
             }

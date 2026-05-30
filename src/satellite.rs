@@ -29,7 +29,7 @@
 //! # Example
 //!
 //! ```
-//! use cli_astro_calc::satellite::Tle;
+//! use ephemerust::satellite::Tle;
 //!
 //! let tle = Tle::parse(
 //!     "ISS (ZARYA)\n\

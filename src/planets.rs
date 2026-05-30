@@ -148,7 +148,7 @@ pub struct HeliocentricEcliptic {
 /// 
 /// # Example
 /// ```no_run
-/// use cli_astro_calc::planets::{Planet, calculate_planet_position};
+/// use ephemerust::planets::{Planet, calculate_planet_position};
 /// 
 /// // Calculate Mercury's position on January 1, 2000
 /// // Note: Requires Earth's VSOP87 data for geocentric conversion

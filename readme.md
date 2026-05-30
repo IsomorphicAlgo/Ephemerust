@@ -1,12 +1,13 @@
-# CLI Astro Calc
+# Ephemerust
 
-A command-line astronomy and orbital-mechanics calculator, written in Rust — growing into a
-satellite-tracking and pass-prediction toolset and a transparent, well-documented
-astrodynamics library for the Rust ecosystem.
+An astronomy and orbital-mechanics toolkit, written in Rust — growing into a
+satellite-tracking and pass-prediction tool and a transparent, well-documented
+astrodynamics library for the Rust ecosystem. The name is a portmanteau of *ephemeris*
+and *Rust*.
 
 ## Overview
 
-CLI Astro Calc implements the time systems, coordinate frames, and orbital calculations
+Ephemerust implements the time systems, coordinate frames, and orbital calculations
 used in space-mission operations and satellite control. It serves a dual purpose: a working
 astronomy toolset, and a study project in Rust and applied astrophysics.
 

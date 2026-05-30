@@ -58,7 +58,7 @@ pub struct Eci {
 /// 
 /// # Example
 /// ```rust
-/// use cli_astro_calc::coordinates::{RaDec, ra_dec_to_alt_az};
+/// use ephemerust::coordinates::{RaDec, ra_dec_to_alt_az};
 /// 
 /// // Convert star at RA=12h, Dec=45° to Alt/Az for observer at 47.9°N
 /// let ra_dec = RaDec { ra: 12.0, dec: 45.0 };
@@ -94,7 +94,7 @@ pub fn ra_dec_to_alt_az(ra_dec: RaDec, observer_lat: f64, _observer_lon: f64, ls
 /// 
 /// # Example
 /// ```rust
-/// use cli_astro_calc::coordinates::{AltAz, alt_az_to_ra_dec};
+/// use ephemerust::coordinates::{AltAz, alt_az_to_ra_dec};
 /// 
 /// // Convert telescope pointing (45° altitude, 180° azimuth = due South) to RA/Dec
 /// let alt_az = AltAz { alt: 45.0, az: 180.0 };
@@ -228,7 +228,7 @@ fn apply_rotation_matrix(matrix: [[f64; 3]; 3], vector: (f64, f64, f64)) -> (f64
 /// 
 /// # Example
 /// ```
-/// use cli_astro_calc::coordinates::{Ecef, ecef_to_eci};
+/// use ephemerust::coordinates::{Ecef, ecef_to_eci};
 /// 
 /// // Point on equator at Greenwich meridian (at Earth's surface)
 /// let ecef = Ecef { x: 6378137.0, y: 0.0, z: 0.0 }; // ~Earth radius
@@ -367,7 +367,7 @@ pub fn ecef_to_eci(ecef: Ecef, gmst: f64) -> Result<Eci> {
 /// 
 /// # Example
 /// ```
-/// use cli_astro_calc::coordinates::{Eci, eci_to_ecef};
+/// use ephemerust::coordinates::{Eci, eci_to_ecef};
 /// 
 /// // Point in ECI frame
 /// let eci = Eci { x: 6378137.0, y: 0.0, z: 0.0 };

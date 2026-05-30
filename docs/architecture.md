@@ -16,7 +16,8 @@ CLI_Astro_Calc/
     ├── coordinates.rs  # RA/Dec ↔ Alt/Az, ECEF ↔ ECI
     ├── celestial.rs    # Sun/Moon positions, rise/set
     ├── orbital.rs      # Kepler's equation, period, state vectors
-    └── planets.rs      # VSOP87 planetary positions
+    ├── planets.rs      # VSOP87 planetary positions
+    └── satellite.rs    # TLE/SGP4 satellite tracking (in progress)
 ```
 
 ## Modules
@@ -29,6 +30,7 @@ CLI_Astro_Calc/
 | `celestial.rs` | Sun/Moon position and rise/set; dispatches planet calls |
 | `orbital.rs` | Orbital mechanics |
 | `planets.rs` | VSOP87 ephemeris (complex and self-contained) |
+| `satellite.rs` | TLE/SGP4 satellite tracking layer over the `sgp4` crate (in progress) |
 
 **Separation rationale**: `celestial.rs` handles the simpler Sun/Moon models and routes
 planet requests to `planets.rs`, which is kept separate because VSOP87 is large and
@@ -53,6 +55,7 @@ self-contained.
 | `thiserror` / `anyhow` | error handling |
 | `log` / `env_logger` | logging |
 | `serde` | serialization (date/time) |
+| `sgp4` | TLE parsing and SGP4/SDP4 satellite propagation engine |
 | `criterion` (dev) | benchmarking |
 
 ## Error handling patterns
@@ -90,7 +93,7 @@ Multi-level logging via `log` + `env_logger`; `--verbose` raises the level to de
 
 ## Testing
 
-The suite has **75 unit tests + 5 doctests** (all passing).
+The suite has **76 unit tests + 6 doctests** (all passing).
 
 - **Unit tests** — per-function, with known reference values, edge cases (poles, equator,
   origin, large coordinates), input validation, round-trip accuracy, and benchmarks.

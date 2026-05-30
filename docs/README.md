@@ -15,6 +15,7 @@ and command reference; the pages here go deep.
 | [VSOP87 planetary theory](vsop87.md) | Planetary ephemeris: series, data, pipeline |
 | [Accuracy & limitations](accuracy-and-limits.md) | What's accurate, what's approximate, what's missing |
 | [Architecture](architecture.md) | Module layout, error handling, logging, testing |
+| [Satellite tracking plan](satellite-tracking-plan.md) | Iterative, stage-gated plan for TLE/SGP4 tracking and pass prediction |
 | [Roadmap](roadmap.md) | Phase 2 (API service), server hardware, future work |
 
 ## How the project is organized

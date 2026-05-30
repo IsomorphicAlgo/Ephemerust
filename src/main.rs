@@ -73,6 +73,18 @@ enum Commands {
         #[arg(long, default_value_t = 398600.4418)]
         mu: f64,
     },
+    /// Satellite tracking from a TLE (under construction; see docs/satellite-tracking-plan.md)
+    Track {
+        /// Path to a file containing a TLE (2- or 3-line element set)
+        #[arg(short, long)]
+        tle_file: Option<String>,
+        /// Observer latitude in degrees (positive north)
+        #[arg(short = 'a', long)]
+        latitude: Option<f64>,
+        /// Observer longitude in degrees (positive east)
+        #[arg(short = 'o', long)]
+        longitude: Option<f64>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -186,6 +198,11 @@ fn main() -> Result<()> {
                 state.position[0], state.position[1], state.position[2]);
             println!("  Velocity [km/s]: vx={:.6} vy={:.6} vz={:.6}",
                 state.velocity[0], state.velocity[1], state.velocity[2]);
+        },
+        Commands::Track { tle_file: _, latitude: _, longitude: _ } => {
+            return Err(cli_astro_calc::AstroError::SatelliteError(
+                "the `track` command is not yet implemented (foundation in place; see docs/satellite-tracking-plan.md)".to_string()
+            ));
         },
     }
     

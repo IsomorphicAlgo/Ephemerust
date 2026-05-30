@@ -9,6 +9,13 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Satellite-tracking foundation (Milestone 0)** — added the `sgp4` crate dependency and a
+  new `satellite` module documenting the frame/unit conventions (TEME → ECEF → WGS84
+  geodetic) and defining the public type stubs `Tle`, `TemeState`, `Subpoint`, `LookAngles`,
+  and `Pass`. Added a `SatelliteError` variant to `AstroError` and a `track` CLI subcommand
+  stub. A smoke test propagates a canonical ISS element set through the `sgp4` engine and
+  asserts a physically plausible low-Earth-orbit radius. See
+  [docs/satellite-tracking-plan.md](docs/satellite-tracking-plan.md).
 - **`orbital` command** now computes results instead of echoing inputs: orbital period,
   true anomaly, and the orbital-elements → state-vector conversion. New optional flags
   `--raan`, `--arg-periapsis`, `--mean-anomaly`, and `--mu` (defaulting to Earth's μ).

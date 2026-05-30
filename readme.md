@@ -1,6 +1,8 @@
 # CLI Astro Calc
 
-A command-line astronomy and orbital-mechanics calculator, written in Rust.
+A command-line astronomy and orbital-mechanics calculator, written in Rust — growing into a
+satellite-tracking and pass-prediction toolset and a transparent, well-documented
+astrodynamics library for the Rust ecosystem.
 
 ## Overview
 
@@ -8,10 +10,20 @@ CLI Astro Calc implements the time systems, coordinate frames, and orbital calcu
 used in space-mission operations and satellite control. It serves a dual purpose: a working
 astronomy toolset, and a study project in Rust and applied astrophysics.
 
+The current development focus extends the project into **satellite tracking and pass
+prediction** — taking a Two-Line Element set (TLE) through SGP4 propagation to ground tracks,
+observer look angles, and visible-pass predictions. The work follows a **library-first**
+design: the production propagator is provided by the validated [`sgp4`](https://crates.io/crates/sgp4)
+crate, while this project supplies the conversion and prediction layer that the raw
+propagator omits (TEME → ECEF → geodetic → topocentric → passes), documented to the same
+standard as the rest of the codebase. The goal is twofold — a dependable tracking tool, and
+the well-documented, teaching-grade astrodynamics library that the Rust ecosystem currently
+lacks. The staged plan lives in the [satellite-tracking plan](docs/satellite-tracking-plan.md).
+
 The project is structured in two phases:
 
 1. **Phase 1 — CLI tool** (the core of this repository): a command-line toolset for
-   astronomical calculations.
+   astronomical calculations, now being extended with satellite tracking.
 2. **Phase 2 — data services**: API-based data access, building toward a standalone Rust
    service deployable on a home server rack and accessible remotely. See the
    [roadmap](docs/roadmap.md).
@@ -28,12 +40,13 @@ The project is structured in two phases:
 | Orbital mechanics (`orbital` command) | ✅ working (period, true anomaly, state vectors) |
 | Planet positions (VSOP87) | ✅ working (truncated VSOP87D, ~arcminute accuracy) |
 | Planet rise/set | ✅ working |
+| Satellite tracking (`track` command) | 🚧 in progress (foundation; see [plan](docs/satellite-tracking-plan.md)) |
 
 ## Install & build
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (75 unit + 5 doctests)
+cargo test             # run the test suite (76 unit + 6 doctests)
 cargo run -- --help    # list all commands
 ```
 

@@ -1,2 +1,5 @@
 /target
 CLI_Astro_Calc.code-workspace
+
+# Local-only agent handoff notes (not part of published docs)
+AGENT_NOTES.md

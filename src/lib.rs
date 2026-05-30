@@ -4,6 +4,7 @@ pub mod celestial;
 pub mod time;
 pub mod orbital;
 pub mod planets;
+pub mod satellite;
 
 // Error handling
 pub mod error {
@@ -19,6 +20,9 @@ pub mod error {
         
         #[error("Calculation error: {0}")]
         CalculationError(String),
+        
+        #[error("Satellite error: {0}")]
+        SatelliteError(String),
         
         #[error("IO error: {0}")]
         IoError(#[from] std::io::Error),
@@ -38,6 +42,9 @@ pub use celestial::{CelestialObject, ObserverLocation, RiseSetTimes};
 
 // Re-export planet types
 pub use planets::{Planet, calculate_planet_position};
+
+// Re-export satellite types
+pub use satellite::{Tle, TemeState, Subpoint, LookAngles, Pass};
 
 // Re-export time functions
 pub use time::{julian_date, greenwich_mean_sidereal_time, local_sidereal_time};

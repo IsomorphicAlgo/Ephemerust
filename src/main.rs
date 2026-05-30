@@ -76,8 +76,11 @@ enum Commands {
     /// Satellite tracking from a TLE (under construction; see docs/satellite-tracking-plan.md)
     Track {
         /// Path to a file containing a TLE (2- or 3-line element set)
-        #[arg(short, long)]
+        #[arg(short = 'f', long)]
         tle_file: Option<String>,
+        /// Inline TLE text (lines separated by literal "\n" or by spaces is not supported; quote the two/three lines)
+        #[arg(short = 't', long)]
+        tle: Option<String>,
         /// Observer latitude in degrees (positive north)
         #[arg(short = 'a', long)]
         latitude: Option<f64>,
@@ -199,14 +202,47 @@ fn main() -> Result<()> {
             println!("  Velocity [km/s]: vx={:.6} vy={:.6} vz={:.6}",
                 state.velocity[0], state.velocity[1], state.velocity[2]);
         },
-        Commands::Track { tle_file: _, latitude: _, longitude: _ } => {
-            return Err(cli_astro_calc::AstroError::SatelliteError(
-                "the `track` command is not yet implemented (foundation in place; see docs/satellite-tracking-plan.md)".to_string()
-            ));
+        Commands::Track { tle_file, tle, latitude: _, longitude: _ } => {
+            use cli_astro_calc::satellite::Tle;
+
+            let parsed = match (tle_file, tle) {
+                (Some(path), _) => Tle::from_file(&path)?,
+                (None, Some(text)) => Tle::parse(&text)?,
+                (None, None) => {
+                    return Err(cli_astro_calc::AstroError::SatelliteError(
+                        "provide a TLE via --tle-file <path> or --tle \"<line1>\\n<line2>\"".to_string()
+                    ));
+                }
+            };
+
+            print_tle_summary(&parsed);
         },
     }
     
     Ok(())
+}
+
+/// Prints a human-readable summary of a parsed TLE.
+///
+/// Interim Milestone 1 output: propagation, look angles, passes, and ground tracks are
+/// added in later milestones (see docs/satellite-tracking-plan.md).
+fn print_tle_summary(tle: &cli_astro_calc::satellite::Tle) {
+    if let Some(name) = &tle.name {
+        println!("Object:        {}", name);
+    }
+    println!("Catalog #:     {} ({})", tle.catalog_number, tle.classification);
+    println!("Intl. desig.:  {}", tle.international_designator);
+    println!("Epoch (UTC):   {}", tle.epoch.format("%Y-%m-%d %H:%M:%S%.3f"));
+    println!("Inclination:   {:.4}°", tle.inclination_deg);
+    println!("RAAN:          {:.4}°", tle.raan_deg);
+    println!("Eccentricity:  {:.7}", tle.eccentricity);
+    println!("Arg perigee:   {:.4}°", tle.arg_perigee_deg);
+    println!("Mean anomaly:  {:.4}°", tle.mean_anomaly_deg);
+    println!("Mean motion:   {:.8} rev/day", tle.mean_motion);
+    println!("B* drag:       {:.6e} 1/earth-radii", tle.bstar);
+    println!("Rev # @ epoch: {}", tle.revolution_number);
+    println!();
+    println!("(propagation and pass prediction are forthcoming — see the satellite-tracking plan)");
 }
 
 fn init_logging(verbose: bool) {

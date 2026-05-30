@@ -40,13 +40,14 @@ The project is structured in two phases:
 | Orbital mechanics (`orbital` command) | ✅ working (period, true anomaly, state vectors) |
 | Planet positions (VSOP87) | ✅ working (truncated VSOP87D, ~arcminute accuracy) |
 | Planet rise/set | ✅ working |
-| Satellite tracking (`track` command) | 🚧 in progress (foundation; see [plan](docs/satellite-tracking-plan.md)) |
+| Satellite TLE parsing (`track` command) | ✅ working (parse/validate; see [plan](docs/satellite-tracking-plan.md)) |
+| Satellite propagation / passes | 🚧 in progress (next milestones) |
 
 ## Install & build
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (76 unit + 6 doctests)
+cargo test             # run the test suite (84 unit + 6 doctests)
 cargo run -- --help    # list all commands
 ```
 
@@ -110,6 +111,21 @@ cargo run -- orbital --semi-major 6778 --eccentricity 0.0001 --inclination 51.6
 
 Optional flags: `--raan`, `--arg-periapsis`, `--mean-anomaly` (degrees), and `--mu`
 (gravitational parameter in km³/s², default Earth).
+
+### `track` — satellite tracking from a TLE (in progress)
+
+```bash
+# From an inline Two-Line Element set
+cargo run -- track --tle "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992
+2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008"
+
+# Or from a file (2- or 3-line element set)
+cargo run -- track --tle-file iss.tle
+```
+
+Currently parses and validates the element set and prints a summary (catalog number, epoch,
+and orbital elements). Propagation, ground tracks, look angles, and pass prediction are being
+added per the [satellite-tracking plan](docs/satellite-tracking-plan.md).
 
 ## Documentation
 

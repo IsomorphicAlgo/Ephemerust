@@ -9,6 +9,14 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **TLE ingestion & parsing (Milestone 1)** — `Tle` now parses and validates standard 2- and
+  3-line element sets, exposing the catalog number, classification, international designator,
+  epoch (UTC), and the full orbital element set as typed fields. Validation covers ASCII/line
+  length, line numbers, matching catalog numbers, and modulo-10 checksums, each with
+  actionable error messages. TLEs can be read from a file (`Tle::from_file`) or an inline
+  string (`Tle::parse`). The `track` command now loads a TLE (`--tle-file` / `--tle`) and
+  prints a parsed summary. A validation test cross-checks every parsed field against the
+  `sgp4` crate's own parser. See [docs/satellite-tracking-plan.md](docs/satellite-tracking-plan.md).
 - **Satellite-tracking foundation (Milestone 0)** — added the `sgp4` crate dependency and a
   new `satellite` module documenting the frame/unit conventions (TEME → ECEF → WGS84
   geodetic) and defining the public type stubs `Tle`, `TemeState`, `Subpoint`, `LookAngles`,

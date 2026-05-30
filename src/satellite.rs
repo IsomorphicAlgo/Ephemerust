@@ -379,14 +379,49 @@ fn parse_epoch(two_digit_year: u32, day_of_year: f64) -> Result<DateTime<Utc>> {
     Ok(Utc.from_utc_datetime(&naive))
 }
 
-/// Propagates a TLE to the given UTC time and returns the TEME state.
+/// Propagates a TLE to the given UTC time and returns the [`TemeState`].
 ///
-/// Stub for Milestone 1. The implementation is delivered in Milestone 2, which wraps the
-/// `sgp4` propagator behind this signature.
-pub fn propagate(_tle: &Tle, _time: DateTime<Utc>) -> Result<TemeState> {
-    Err(AstroError::SatelliteError(
-        "propagation is not yet implemented (planned for Milestone 2)".to_string(),
-    ))
+/// The orbital elements are re-parsed from the original element-set lines and handed to the
+/// `sgp4` engine, which performs the SGP4/SDP4 propagation. The target time is converted to
+/// the engine's minutes-since-epoch representation; the result is the satellite's position
+/// (km) and velocity (km/s) in the TEME frame of epoch.
+///
+/// # Errors
+///
+/// Returns [`AstroError::SatelliteError`] if the element set cannot be parsed or yields
+/// invalid epoch constants, if the target time is too far from the epoch to represent
+/// (nanosecond overflow), or if the propagation itself diverges (for example, a decayed
+/// orbit or an eccentricity driven out of range).
+pub fn propagate(tle: &Tle, time: DateTime<Utc>) -> Result<TemeState> {
+    let elements = sgp4::Elements::from_tle(
+        tle.name.clone(),
+        tle.line1.as_bytes(),
+        tle.line2.as_bytes(),
+    )
+    .map_err(|e| {
+        AstroError::SatelliteError(format!("could not parse element set for propagation: {e}"))
+    })?;
+
+    let constants = sgp4::Constants::from_elements(&elements).map_err(|e| {
+        AstroError::SatelliteError(format!("invalid orbital elements for propagation: {e}"))
+    })?;
+
+    let minutes = elements
+        .datetime_to_minutes_since_epoch(&time.naive_utc())
+        .map_err(|e| {
+            AstroError::SatelliteError(format!(
+                "target time is too far from the element-set epoch to represent: {e}"
+            ))
+        })?;
+
+    let prediction = constants.propagate(minutes).map_err(|e| {
+        AstroError::SatelliteError(format!("SGP4 propagation diverged: {e}"))
+    })?;
+
+    Ok(TemeState {
+        position_km: prediction.position,
+        velocity_km_s: prediction.velocity,
+    })
 }
 
 #[cfg(test)]
@@ -406,6 +441,12 @@ mod tests {
         "1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927";
     const ISS_2008_LINE2: &str =
         "2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537";
+
+    // Vallado SGP4 verification satellite 00005 (Vanguard), with published reference outputs.
+    const SAT5_LINE1: &str =
+        "1 00005U 58002B   00179.78495062  .00000023  00000-0  28098-4 0  4753";
+    const SAT5_LINE2: &str =
+        "2 00005  34.2682 348.7242 1859667 331.7664  19.3264 10.82419157413667";
 
     fn iss_3line() -> String {
         format!("{ISS_NAME}\n{ISS_LINE1}\n{ISS_LINE2}")
@@ -514,6 +555,97 @@ mod tests {
                 elements.datetime
             );
         }
+    }
+
+    #[test]
+    fn propagates_sat5_epoch_to_reference_teme_state() {
+        let tle = Tle::from_lines(None, SAT5_LINE1, SAT5_LINE2).expect("verification TLE parses");
+        let state = propagate(&tle, tle.epoch).expect("propagation at epoch succeeds");
+
+        // Vallado SGP4 verification output for satellite 00005 at tsince = 0.
+        let expected_r = [7022.46529266, -1400.08296755, 0.03995155];
+        let expected_v = [1.893841015, 6.405893759, 4.534807250];
+
+        // `propagate` uses the crate's default model (WGS84 + IAU sidereal time), whereas the
+        // published tcppver reference uses the WGS72 + AFSPC model. The two agree at the
+        // tens-of-metres level — far tighter than the kilometres-per-day at which TLEs
+        // themselves drift — so a 0.05 km / 1e-4 km/s tolerance confirms correct propagation
+        // while accommodating the documented model difference.
+        for i in 0..3 {
+            assert!(
+                (state.position_km[i] - expected_r[i]).abs() < 0.05,
+                "position[{i}]: {} vs reference {}",
+                state.position_km[i],
+                expected_r[i]
+            );
+            assert!(
+                (state.velocity_km_s[i] - expected_v[i]).abs() < 1e-4,
+                "velocity[{i}]: {} vs reference {}",
+                state.velocity_km_s[i],
+                expected_v[i]
+            );
+        }
+    }
+
+    #[test]
+    fn afspc_mode_reproduces_reference_to_sub_metre() {
+        // Confirms the ~tens-of-metres gap in `propagates_sat5_epoch_to_reference_teme_state`
+        // is purely the WGS84/IAU-vs-WGS72/AFSPC model choice: in AFSPC mode the engine
+        // reproduces the published reference to sub-metre precision.
+        let elements =
+            sgp4::Elements::from_tle(None, SAT5_LINE1.as_bytes(), SAT5_LINE2.as_bytes()).unwrap();
+        let constants = sgp4::Constants::from_elements_afspc_compatibility_mode(&elements).unwrap();
+        let prediction = constants
+            .propagate_afspc_compatibility_mode(sgp4::MinutesSinceEpoch(0.0))
+            .unwrap();
+
+        let expected_r = [7022.46529266, -1400.08296755, 0.03995155];
+        for i in 0..3 {
+            assert!(
+                (prediction.position[i] - expected_r[i]).abs() < 1e-3,
+                "AFSPC position[{i}]: {} vs reference {}",
+                prediction.position[i],
+                expected_r[i]
+            );
+        }
+    }
+
+    #[test]
+    fn wrapper_matches_engine_across_offsets() {
+        for (l1, l2) in [(ISS_LINE1, ISS_LINE2), (SAT5_LINE1, SAT5_LINE2)] {
+            let tle = Tle::from_lines(None, l1, l2).unwrap();
+            let elements = sgp4::Elements::from_tle(None, l1.as_bytes(), l2.as_bytes()).unwrap();
+            let constants = sgp4::Constants::from_elements(&elements).unwrap();
+
+            for offset_min in [0.0_f64, 30.0, 90.0, 540.0] {
+                let target =
+                    tle.epoch + chrono::Duration::nanoseconds((offset_min * 60.0 * 1e9) as i64);
+                let state = propagate(&tle, target).expect("propagation succeeds");
+                let reference = constants
+                    .propagate(sgp4::MinutesSinceEpoch(offset_min))
+                    .expect("engine propagation succeeds");
+
+                for i in 0..3 {
+                    assert!(
+                        (state.position_km[i] - reference.position[i]).abs() < 1e-2,
+                        "position mismatch at {offset_min} min, axis {i}"
+                    );
+                    assert!(
+                        (state.velocity_km_s[i] - reference.velocity[i]).abs() < 1e-5,
+                        "velocity mismatch at {offset_min} min, axis {i}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn propagation_at_unrepresentable_time_errors() {
+        let tle = Tle::from_lines(None, SAT5_LINE1, SAT5_LINE2).unwrap();
+        // ~400 years past epoch overflows the engine's minutes-since-epoch representation.
+        let far_future = tle.epoch + chrono::Duration::days(365 * 400);
+        let err = propagate(&tle, far_future).expect_err("an unrepresentable time must error");
+        assert!(matches!(err, AstroError::SatelliteError(_)), "unexpected error: {err}");
     }
 
     #[test]

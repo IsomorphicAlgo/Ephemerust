@@ -93,7 +93,7 @@ Multi-level logging via `log` + `env_logger`; `--verbose` raises the level to de
 
 ## Testing
 
-The suite has **84 unit tests + 6 doctests** (all passing).
+The suite has **88 unit tests + 6 doctests** (all passing).
 
 - **Unit tests** — per-function, with known reference values, edge cases (poles, equator,
   origin, large coordinates), input validation, round-trip accuracy, and benchmarks.

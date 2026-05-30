@@ -41,14 +41,14 @@ The project is structured in two phases:
 | Orbital mechanics (`orbital` command) | ✅ working (period, true anomaly, state vectors) |
 | Planet positions (VSOP87) | ✅ working (truncated VSOP87D, ~arcminute accuracy) |
 | Planet rise/set | ✅ working |
-| Satellite TLE parsing (`track` command) | ✅ working (parse/validate; see [plan](docs/satellite-tracking-plan.md)) |
-| Satellite propagation / passes | 🚧 in progress (next milestones) |
+| Satellite TLE parsing & propagation | ✅ working (TLE → TEME state via SGP4; see [plan](docs/satellite-tracking-plan.md)) |
+| Satellite ground track / look angles / passes | 🚧 in progress (next milestones) |
 
 ## Install & build
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (84 unit + 6 doctests)
+cargo test             # run the test suite (88 unit + 6 doctests)
 cargo run -- --help    # list all commands
 ```
 
@@ -124,9 +124,10 @@ cargo run -- track --tle "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -
 cargo run -- track --tle-file iss.tle
 ```
 
-Currently parses and validates the element set and prints a summary (catalog number, epoch,
-and orbital elements). Propagation, ground tracks, look angles, and pass prediction are being
-added per the [satellite-tracking plan](docs/satellite-tracking-plan.md).
+Currently parses and validates the element set, prints a summary (catalog number, epoch, and
+orbital elements), and propagates to the element-set epoch to report the TEME-frame state
+vector. Ground tracks, observer look angles, and pass prediction are being added per the
+[satellite-tracking plan](docs/satellite-tracking-plan.md).
 
 ## Documentation
 

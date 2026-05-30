@@ -216,6 +216,14 @@ fn main() -> Result<()> {
             };
 
             print_tle_summary(&parsed);
+
+            let state = ephemerust::satellite::propagate(&parsed, parsed.epoch)?;
+            println!();
+            println!("State at epoch (TEME frame):");
+            println!("  Position [km]:   x={:.3} y={:.3} z={:.3}",
+                state.position_km[0], state.position_km[1], state.position_km[2]);
+            println!("  Velocity [km/s]: vx={:.6} vy={:.6} vz={:.6}",
+                state.velocity_km_s[0], state.velocity_km_s[1], state.velocity_km_s[2]);
         },
     }
     
@@ -241,8 +249,6 @@ fn print_tle_summary(tle: &ephemerust::satellite::Tle) {
     println!("Mean motion:   {:.8} rev/day", tle.mean_motion);
     println!("B* drag:       {:.6e} 1/earth-radii", tle.bstar);
     println!("Rev # @ epoch: {}", tle.revolution_number);
-    println!();
-    println!("(propagation and pass prediction are forthcoming — see the satellite-tracking plan)");
 }
 
 fn init_logging(verbose: bool) {

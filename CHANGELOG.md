@@ -9,6 +9,15 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Propagation wrapper (Milestone 2)** — `satellite::propagate(tle, time)` wraps the `sgp4`
+  engine, converting a UTC datetime to the engine's minutes-since-epoch representation and
+  returning the satellite's `TemeState` (TEME-frame position in km and velocity in km/s).
+  Parse failures, invalid epoch constants, unrepresentable times (nanosecond overflow), and
+  propagation divergence are all mapped to actionable `SatelliteError`s. The `track` command
+  now also reports the TEME state at the element-set epoch. Validated against the published
+  Vallado verification vector for satellite 00005 (within the documented WGS84/IAU-vs-AFSPC
+  model tolerance), with a cross-check that the wrapper's UTC→minutes path matches direct
+  engine calls across several offsets. See [docs/satellite-tracking-plan.md](docs/satellite-tracking-plan.md).
 - **TLE ingestion & parsing (Milestone 1)** — `Tle` now parses and validates standard 2- and
   3-line element sets, exposing the catalog number, classification, international designator,
   epoch (UTC), and the full orbital element set as typed fields. Validation covers ASCII/line

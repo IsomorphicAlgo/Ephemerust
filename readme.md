@@ -6,6 +6,18 @@ used in space-mission operations and satellite control. It serves a dual purpose
 
 astronomy toolset, and a study project in Rust and applied astrophysics.
 
+## Acknowledgments
+
+Ephemerust stands on the shoulders of the open-source astrodynamics community: it is built
+*around* established tools rather than reinventing them. Most directly, it wraps the
+[`sgp4`](https://crates.io/crates/sgp4) crate (the validated SGP4/SDP4 propagation engine) and
+relies on [`chrono`](https://crates.io/crates/chrono) for time handling and
+[`clap`](https://crates.io/crates/clap) for its command-line interface. Sincere thanks to the
+maintainers of those crates, and to the authors of the foundational references — Jean Meeus,
+David Vallado, and the VSOP87 planetary theory of Bretagnon and Francou — without whose work
+this project would not be possible. Full attributions are listed under
+[References](#references).
+
 ## Overview
 
 Ephemerust is an accessible, **teaching-grade** astrodynamics library and CLI for Rust — in
@@ -138,7 +150,7 @@ vector. Ground tracks, observer look angles, and pass prediction are being added
 
 ## Documentation
 
-The full mathematics, conventions, and engineering details live in `[docs/](docs/)`:
+The full mathematics, conventions, and engineering details live in [docs/](docs/):
 
 - [Time systems](docs/time-systems.md) — Julian Date, sidereal time
 - [Celestial positions](docs/celestial-positions.md) — Sun & Moon models, rise/set
@@ -159,6 +171,45 @@ deliberately committed-stable API. The minimum supported Rust version (MSRV) is 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
+
+## References
+
+Ephemerust is built on, validated against, and inspired by the tools and sources below. Deep
+gratitude to everyone who created and maintains them.
+
+### Tools & libraries (Rust crates)
+
+- [`sgp4`](https://crates.io/crates/sgp4) — SGP4/SDP4 satellite propagation engine; the core
+  this project wraps.
+- [`chrono`](https://crates.io/crates/chrono) — date and time handling.
+- [`clap`](https://crates.io/crates/clap) — command-line argument parsing.
+- [`thiserror`](https://crates.io/crates/thiserror) and
+  [`anyhow`](https://crates.io/crates/anyhow) — structured error handling.
+- [`log`](https://crates.io/crates/log) and
+  [`env_logger`](https://crates.io/crates/env_logger) — logging.
+- [`serde`](https://crates.io/crates/serde) — serialization.
+- [`criterion`](https://crates.io/crates/criterion) — benchmarking (development dependency).
+
+### Algorithms, theory & data
+
+- **VSOP87 planetary theory** — Bretagnon, P. & Francou, G. (1988), *Planetary theories in
+  rectangular and spherical variables: VSOP87 solutions*, Astronomy & Astrophysics, 202, 309.
+- **SGP4 & the Two-Line Element format** — Hoots, F. R. & Roehrich, R. L. (1980), *Spacetrack
+  Report No. 3*; and Vallado, D. A. et al. (2006), *Revisiting Spacetrack Report #3* (AIAA
+  2006-6753) — the source of the SGP4 verification vectors used in the test suite.
+- **Astronomical algorithms** — Meeus, J. (1998), *Astronomical Algorithms* (2nd ed.),
+  Willmann-Bell.
+- **Astrodynamics** — Vallado, D. A., *Fundamentals of Astrodynamics and Applications*.
+- **IAU conventions** for coordinate frames and time scales.
+- [JPL Horizons](https://ssd.jpl.nasa.gov/horizons/) — ephemeris data used to validate the
+  planet positions.
+- [CelesTrak](https://celestrak.org/) (Dr. T. S. Kelso) — TLE format documentation and orbital
+  element data.
+
+### Inspiration
+
+- [Skyfield](https://rhodesmill.org/skyfield/) (Brandon Rhodes) — the Python library whose
+  ergonomic, accessible design Ephemerust aims to bring to the Rust ecosystem.
 
 ## License
 

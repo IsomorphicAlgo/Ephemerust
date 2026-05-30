@@ -21,11 +21,28 @@ pub mod error {
         #[error("Calculation error: {0}")]
         CalculationError(String),
         
+        /// A structured, educational TLE-parsing failure. The detailed, teaching-oriented
+        /// message comes from the wrapped [`crate::satellite::TleError`].
+        #[error(transparent)]
+        Tle(#[from] crate::satellite::TleError),
+
         #[error("Satellite error: {0}")]
         SatelliteError(String),
         
         #[error("IO error: {0}")]
         IoError(#[from] std::io::Error),
+    }
+
+    impl AstroError {
+        /// Returns a short, actionable formatting hint suitable for display on a dedicated
+        /// `Hint:` line after the error. Currently provided for TLE-parsing errors, where the
+        /// hint explains how to correct the input; other variants return `None`.
+        pub fn hint(&self) -> Option<&'static str> {
+            match self {
+                AstroError::Tle(e) => e.hint(),
+                _ => None,
+            }
+        }
     }
 
     pub type Result<T> = std::result::Result<T, AstroError>;
@@ -44,7 +61,7 @@ pub use celestial::{CelestialObject, ObserverLocation, RiseSetTimes};
 pub use planets::{Planet, calculate_planet_position};
 
 // Re-export satellite types
-pub use satellite::{Tle, TemeState, Subpoint, LookAngles, Pass};
+pub use satellite::{Tle, TleError, TemeState, Subpoint, LookAngles, Pass};
 
 // Re-export time functions
 pub use time::{julian_date, greenwich_mean_sidereal_time, local_sidereal_time};

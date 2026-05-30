@@ -43,6 +43,7 @@ self-contained.
 - Coordinate types: `RaDec`, `AltAz`, `Ecef`, `Eci`
 - Celestial types: `CelestialObject`, `ObserverLocation`, `RiseSetTimes`
 - Planet types: `Planet`, `calculate_planet_position`
+- Satellite types: `Tle`, `TleError`, `TemeState`, `Subpoint`, `LookAngles`, `Pass`
 - Time functions: `julian_date`, `greenwich_mean_sidereal_time`, `local_sidereal_time`
 - Errors: `AstroError`, `Result<T>`
 
@@ -61,7 +62,7 @@ self-contained.
 ## Error handling patterns
 
 The error type is `AstroError` (`InvalidCoordinate`, `InvalidTime`, `CalculationError`,
-`IoError`), with `Result<T> = std::result::Result<T, AstroError>`.
+`Tle`, `SatelliteError`, `IoError`), with `Result<T> = std::result::Result<T, AstroError>`.
 
 - **Validate early** — check inputs (NaN, infinity, range) at function entry.
 - **Fail fast for critical errors** — invalid Julian Date, missing required data
@@ -80,6 +81,22 @@ if julian_date < MIN_JD || julian_date > MAX_JD {
 }
 ```
 
+### Educational errors (the "expose the why" principle)
+
+Errors are treated as teaching moments. The structured `satellite::TleError` enum models each
+distinct TLE-parsing failure (wrong line count, non-ASCII, short line, wrong line number,
+checksum-not-a-digit, checksum mismatch, catalog mismatch, an unparseable field, and epoch
+problems). Every variant's `Display` states **what was expected**, **what was found**, and
+**the underlying rule** of the fixed-column TLE format; field errors additionally name the
+field and its exact column range. `TleError::hint()` (surfaced via `AstroError::hint()`)
+returns a short corrective next step.
+
+`TleError` folds into `AstroError` through `#[error(transparent)] Tle(#[from] TleError)`, so
+library callers can match the precise variant while the CLI renders the rich message. The
+binary's `main` delegates to a `run() -> Result<()>` and, on error, prints `Error: <message>`
+and an optional `Hint: <…>` line to stderr before exiting with a non-zero status — replacing
+the default `Debug` rendering.
+
 ## Logging
 
 Multi-level logging via `log` + `env_logger`; `--verbose` raises the level to debug.
@@ -93,11 +110,13 @@ Multi-level logging via `log` + `env_logger`; `--verbose` raises the level to de
 
 ## Testing
 
-The suite has **88 unit tests + 6 doctests** (all passing).
+The suite has **89 unit tests + 2 CLI integration tests + 6 doctests** (all passing).
 
 - **Unit tests** — per-function, with known reference values, edge cases (poles, equator,
   origin, large coordinates), input validation, round-trip accuracy, and benchmarks.
-- **Integration tests** — end-to-end CLI workflows and cross-module pipelines.
+- **Integration tests** — end-to-end CLI workflows and cross-module pipelines, including
+  `tests/cli_track.rs`, which spawns the binary and asserts that malformed TLEs produce a
+  legible educational error and a non-zero exit code.
 - **Validation tests** — comparison with authoritative sources (JPL Horizons, Meeus).
 - **Doctests** — keep documentation examples compiling and correct.
 

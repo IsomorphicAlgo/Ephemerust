@@ -2,10 +2,13 @@
 name = "ephemerust"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.88"
 authors = ["MichaelHansen"]
-description = "Astronomy, orbital-mechanics, and satellite-tracking toolkit and library, written in Rust"
+description = "An accessible, teaching-grade astronomy, orbital-mechanics, and satellite-tracking library and CLI for Rust"
 license = "MIT"
 repository = "https://github.com/IsomorphicAlgo/ephemerust"
+documentation = "https://docs.rs/ephemerust"
+readme = "readme.md"
 keywords = ["astronomy", "orbital-mechanics", "satellite", "ephemeris", "sgp4"]
 categories = ["command-line-utilities", "science"]
 

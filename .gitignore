@@ -1,5 +1,6 @@
 /target
 CLI_Astro_Calc.code-workspace
 
-# Local-only agent handoff notes (not part of published docs)
+# Local-only working notes and plans (not part of published docs)
 AGENT_NOTES.md
+docs/foundation-refactor-plan.md

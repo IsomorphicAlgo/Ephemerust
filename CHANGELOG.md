@@ -5,10 +5,29 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project aims to adhere to [Semantic Versioning](https://semver.org/).
 
+**Versioning policy:** the project remains in the `0.x.y` range while its public API is still
+evolving. Per Cargo's SemVer rules, during `0.x` the *minor* version carries breaking changes
+(`0.2.0` → `0.3.0`) and the *patch* version carries compatible ones (`0.2.0` → `0.2.1`).
+A `1.0.0` release is reserved for a deliberately committed-stable API.
+
 ## [Unreleased]
 
 ### Added
 
+- **Educational error handling** — introduced a structured `satellite::TleError` enum whose
+  every variant explains *what was expected*, *what was found*, and *the underlying rule* of
+  the fixed-column TLE format (wrong line count, non-ASCII, short line, wrong line number,
+  checksum-not-a-digit, checksum mismatch, catalog mismatch, unparseable field with its named
+  column range, and epoch problems). `TleError::hint()` (exposed via `AstroError::hint()`)
+  returns a corrective next step. `TleError` folds into `AstroError` via
+  `#[error(transparent)] Tle(#[from] TleError)`, so callers can match precise variants. The
+  CLI now renders errors as `Error:`/`Hint:` lines on stderr with a non-zero exit code instead
+  of the default `Debug` rendering. Added a `tests/cli_track.rs` integration test covering the
+  malformed-TLE path end to end.
+- **crates.io preparation** — completed the package manifest with `documentation`, `readme`,
+  and an explicit `rust-version` (MSRV **1.88**, set by the `sgp4` dependency), refined the
+  `description`, and documented the project's `0.x`-until-stable versioning policy. The
+  version remains `0.2.0` (no rollback).
 - **Propagation wrapper (Milestone 2)** — `satellite::propagate(tle, time)` wraps the `sgp4`
   engine, converting a UTC datetime to the engine's minutes-since-epoch representation and
   returning the satellite's `TemeState` (TEME-frame position in km and velocity in km/s).

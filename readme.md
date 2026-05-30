@@ -1,20 +1,22 @@
-# Ephemerust
+# Ephemerust (*ephemeris - Rust*)
 
-An astronomy and orbital-mechanics toolkit, written in Rust — growing into a
-satellite-tracking and pass-prediction tool and a transparent, well-documented
-astrodynamics library for the Rust ecosystem. The name is a portmanteau of *ephemeris*
-and *Rust*.
+Ephemerust implements the time systems, coordinate frames, and orbital calculations
+
+used in space-mission operations and satellite control. It serves a dual purpose: a working
+
+astronomy toolset, and a study project in Rust and applied astrophysics.
 
 ## Overview
 
 Ephemerust implements the time systems, coordinate frames, and orbital calculations
-used in space-mission operations and satellite control. It serves a dual purpose: a working
-astronomy toolset, and a study project in Rust and applied astrophysics.
+used in space-mission operations and satellite control. It serves a dual purpose: a dependable
+astronomy toolset, and a transparent, well-documented reference implementation of applied
+astrodynamics for the Rust ecosystem.
 
 The current development focus extends the project into **satellite tracking and pass
 prediction** — taking a Two-Line Element set (TLE) through SGP4 propagation to ground tracks,
 observer look angles, and visible-pass predictions. The work follows a **library-first**
-design: the production propagator is provided by the validated [`sgp4`](https://crates.io/crates/sgp4)
+design: the production propagator is provided by the validated `[sgp4](https://crates.io/crates/sgp4)`
 crate, while this project supplies the conversion and prediction layer that the raw
 propagator omits (TEME → ECEF → geodetic → topocentric → passes), documented to the same
 standard as the rest of the codebase. The goal is twofold — a dependable tracking tool, and
@@ -24,31 +26,32 @@ lacks. The staged plan lives in the [satellite-tracking plan](docs/satellite-tra
 The project is structured in two phases:
 
 1. **Phase 1 — CLI tool** (the core of this repository): a command-line toolset for
-   astronomical calculations, now being extended with satellite tracking.
-2. **Phase 2 — data services**: API-based data access, building toward a standalone Rust
-   service deployable on a home server rack and accessible remotely. See the
-   [roadmap](docs/roadmap.md).
+  astronomical calculations, now being extended with satellite tracking.
+2. **Phase 2 — data services**: API-based data access, building toward a standalone,
+  self-hosted Rust service accessible remotely. See the [roadmap](docs/roadmap.md).
 
 ## Status at a glance
 
-| Feature | Status |
-|---------|--------|
-| Julian Date / sidereal time | ✅ working |
-| Sun & Moon position | ✅ working |
-| Sun & Moon rise/set | ✅ working |
-| RA/Dec ↔ Alt/Az | ✅ working |
-| ECEF ↔ ECI | ✅ working |
-| Orbital mechanics (`orbital` command) | ✅ working (period, true anomaly, state vectors) |
-| Planet positions (VSOP87) | ✅ working (truncated VSOP87D, ~arcminute accuracy) |
-| Planet rise/set | ✅ working |
-| Satellite TLE parsing & propagation | ✅ working (TLE → TEME state via SGP4; see [plan](docs/satellite-tracking-plan.md)) |
-| Satellite ground track / look angles / passes | 🚧 in progress (next milestones) |
+
+| Feature                                       | Status                                                                             |
+| --------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Julian Date / sidereal time                   | ✅ working                                                                          |
+| Sun & Moon position                           | ✅ working                                                                          |
+| Sun & Moon rise/set                           | ✅ working                                                                          |
+| RA/Dec ↔ Alt/Az                               | ✅ working                                                                          |
+| ECEF ↔ ECI                                    | ✅ working                                                                          |
+| Orbital mechanics (`orbital` command)         | ✅ working (period, true anomaly, state vectors)                                    |
+| Planet positions (VSOP87)                     | ✅ working (truncated VSOP87D, ~arcminute accuracy)                                 |
+| Planet rise/set                               | ✅ working                                                                          |
+| Satellite TLE parsing & propagation           | ✅ working (TLE → TEME state via SGP4; see [plan](docs/satellite-tracking-plan.md)) |
+| Satellite ground track / look angles / passes | 🚧 in progress (next milestones)                                                   |
+
 
 ## Install & build
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (88 unit + 6 doctests)
+cargo test             # run the test suite (89 unit + 2 CLI integration + 6 doctests)
 cargo run -- --help    # list all commands
 ```
 
@@ -131,7 +134,7 @@ vector. Ground tracks, observer look angles, and pass prediction are being added
 
 ## Documentation
 
-The full mathematics, conventions, and engineering details live in [`docs/`](docs/):
+The full mathematics, conventions, and engineering details live in `[docs/](docs/)`:
 
 - [Time systems](docs/time-systems.md) — Julian Date, sidereal time
 - [Celestial positions](docs/celestial-positions.md) — Sun & Moon models, rise/set
@@ -141,6 +144,13 @@ The full mathematics, conventions, and engineering details live in [`docs/`](doc
 - [Accuracy & limitations](docs/accuracy-and-limits.md)
 - [Architecture](docs/architecture.md) — modules, errors, logging, testing
 - [Roadmap](docs/roadmap.md) — Phase 2 (API service) and deployment plans
+
+## Versioning
+
+Ephemerust follows [Semantic Versioning](https://semver.org/) and is intentionally in the
+`0.x` range while its public API stabilizes. During `0.x`, the minor version marks breaking
+changes and the patch version marks compatible ones; a `1.0.0` release is reserved for a
+deliberately committed-stable API. The minimum supported Rust version (MSRV) is **1.88**.
 
 ## Changelog
 

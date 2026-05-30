@@ -44,6 +44,185 @@
 
 use crate::{AstroError, Result};
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use thiserror::Error;
+
+/// A structured, *educational* error describing why a Two-Line Element set could not be
+/// parsed.
+///
+/// Every variant is designed to be a teaching moment: its [`Display`](std::fmt::Display)
+/// message states **what was expected**, **what was found**, and **the underlying rule** of
+/// the TLE format, and [`TleError::hint`] offers a short, actionable next step. The TLE
+/// format is unforgiving precisely because it is *fixed-column*: each field is read from an
+/// exact character range, so a single shifted or altered character changes the meaning of
+/// everything after it.
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum TleError {
+    /// The input did not contain exactly two data lines (optionally preceded by a name).
+    #[error(
+        "expected a 2-line or 3-line element set, but found {found} non-empty line(s). \
+         A TLE is two 69-column data lines, optionally preceded by a name line (the common \
+         \"3-line\" form)"
+    )]
+    WrongLineCount {
+        /// Number of non-empty lines actually found.
+        found: usize,
+    },
+
+    /// A data line contained a non-ASCII character.
+    #[error(
+        "TLE line {line} contains a non-ASCII character. TLE lines are strictly ASCII with \
+         fixed column positions; a stray Unicode character (a smart quote or non-breaking \
+         space, for example) shifts every field that follows it"
+    )]
+    NonAscii {
+        /// Offending line number (1 or 2).
+        line: u8,
+    },
+
+    /// A data line was shorter than the required 69 columns.
+    #[error(
+        "TLE line {line} has {found} columns, but 69 are required. TLE lines use strict \
+         fixed-column widths, so each field is read by position — a short line means a field \
+         has been truncated or trailing spaces were dropped"
+    )]
+    LineTooShort {
+        /// Offending line number (1 or 2).
+        line: u8,
+        /// Number of columns actually found.
+        found: usize,
+    },
+
+    /// A data line did not begin with its expected line-number digit.
+    #[error(
+        "expected TLE line {expected} to begin with '{expected}', but it begins with \
+         '{found}'. The first column of each data line is its line number (1 or 2); the two \
+         lines may be swapped or out of order"
+    )]
+    WrongLineNumber {
+        /// The digit the line was expected to start with ('1' or '2').
+        expected: char,
+        /// The character actually found in column 1.
+        found: char,
+    },
+
+    /// The checksum column held a non-digit character.
+    #[error(
+        "the checksum column (column 69) of TLE line {line} is '{found}', which is not a \
+         digit. Each data line ends with a single modulo-10 check digit"
+    )]
+    ChecksumNotDigit {
+        /// Offending line number (1 or 2).
+        line: u8,
+        /// The non-digit text found in the checksum column.
+        found: String,
+    },
+
+    /// The computed checksum did not match the stated check digit.
+    #[error(
+        "TLE line {line} fails its checksum: the line's columns sum to {computed} (mod 10), \
+         but the stated check digit is {stated}. The modulo-10 checksum adds each column \
+         (digits add their value, a minus sign adds 1, everything else adds 0); a mismatch \
+         usually means a character was altered in transit"
+    )]
+    ChecksumMismatch {
+        /// Offending line number (1 or 2).
+        line: u8,
+        /// Checksum computed from columns 1–68.
+        computed: u32,
+        /// Check digit stated in column 69.
+        stated: u32,
+    },
+
+    /// The two lines carried different satellite catalog numbers.
+    #[error(
+        "the two lines describe different satellites: line 1 catalog number is {line1}, but \
+         line 2 is {line2}. Both lines of a set must carry the same catalog number — lines \
+         from two different element sets may have been combined"
+    )]
+    CatalogMismatch {
+        /// Catalog number read from line 1.
+        line1: u32,
+        /// Catalog number read from line 2.
+        line2: u32,
+    },
+
+    /// A specific field could not be parsed; names the field and its column range.
+    #[error(
+        "could not parse the {field} field (line {line}, columns {start}-{end}) from \
+         '{found}': {reason}"
+    )]
+    Field {
+        /// Human-readable field name.
+        field: String,
+        /// Line the field lives on (1 or 2).
+        line: u8,
+        /// 1-indexed start column (inclusive).
+        start: usize,
+        /// 1-indexed end column (inclusive).
+        end: usize,
+        /// The raw text that failed to parse.
+        found: String,
+        /// Why the parse failed, including the expected shape.
+        reason: String,
+    },
+
+    /// The epoch day-of-year was outside the valid `[1.0, 367.0)` range.
+    #[error(
+        "the epoch day-of-year is {day_of_year}, which is out of range. The TLE epoch is a \
+         fractional day-of-year in [1.0, 366.99…]; a value outside that range indicates a \
+         corrupted epoch field"
+    )]
+    EpochOutOfRange {
+        /// The out-of-range day-of-year value.
+        day_of_year: f64,
+    },
+
+    /// The epoch year and day-of-year did not resolve to a real calendar date.
+    #[error("the epoch does not resolve to a valid calendar date (year {year}, day-of-year {ordinal})")]
+    InvalidEpochDate {
+        /// Reconstructed four-digit year.
+        year: i32,
+        /// Day-of-year ordinal.
+        ordinal: u32,
+    },
+}
+
+impl TleError {
+    /// Returns a short, actionable formatting hint for this error, suitable for display on a
+    /// dedicated `Hint:` line after the error message.
+    pub fn hint(&self) -> Option<&'static str> {
+        Some(match self {
+            TleError::WrongLineCount { .. } => {
+                "Provide exactly two data lines (or a name line plus two data lines), and quote \
+                 the whole set so the line breaks are preserved."
+            }
+            TleError::NonAscii { .. } => {
+                "Re-copy the element set as plain text, replacing smart quotes and non-breaking \
+                 spaces with plain ASCII characters."
+            }
+            TleError::LineTooShort { .. } => {
+                "A complete TLE data line is exactly 69 characters, including any trailing spaces."
+            }
+            TleError::WrongLineNumber { .. } => {
+                "Line 1 must start with '1' and line 2 with '2'; check that the lines are in order."
+            }
+            TleError::ChecksumMismatch { .. } | TleError::ChecksumNotDigit { .. } => {
+                "Re-download the element set from its source; a single altered character breaks \
+                 the check digit."
+            }
+            TleError::CatalogMismatch { .. } => {
+                "Make sure both lines come from the same element set for a single satellite."
+            }
+            TleError::Field { .. } => {
+                "Compare the field against the fixed TLE column layout in \
+                 docs/satellite-tracking-plan.md."
+            }
+            TleError::EpochOutOfRange { .. } | TleError::InvalidEpochDate { .. } => {
+                "The epoch is a 2-digit year followed by a fractional day-of-year (001.0–366.x)."
+            }
+        })
+    }
+}
 
 /// A parsed and validated Two-Line Element set.
 ///
@@ -162,10 +341,7 @@ impl Tle {
                 let name = name.trim().strip_prefix("0 ").unwrap_or(name.trim()).trim();
                 Self::from_lines(Some(name), l1, l2)
             }
-            other => Err(AstroError::SatelliteError(format!(
-                "expected a 2-line or 3-line element set, found {} non-empty line(s)",
-                other.len()
-            ))),
+            other => Err(TleError::WrongLineCount { found: other.len() }.into()),
         }
     }
 
@@ -178,36 +354,40 @@ impl Tle {
     /// Builds a [`Tle`] from an optional name and the two data lines, validating structure,
     /// checksums, and each field.
     pub fn from_lines(name: Option<&str>, line1: &str, line2: &str) -> Result<Self> {
-        let l1 = validate_line(line1, '1')?;
-        let l2 = validate_line(line2, '2')?;
+        let l1 = validate_line(line1, 1)?;
+        let l2 = validate_line(line2, 2)?;
 
-        let catalog_1 = parse_u32(col(l1, 3, 7), "satellite catalog number (line 1)")?;
-        let catalog_2 = parse_u32(col(l2, 3, 7), "satellite catalog number (line 2)")?;
+        let catalog_1 = parse_u32(&FieldSpec::new("satellite catalog number", 1, 3, 7), l1)?;
+        let catalog_2 = parse_u32(&FieldSpec::new("satellite catalog number", 2, 3, 7), l2)?;
         if catalog_1 != catalog_2 {
-            return Err(AstroError::SatelliteError(format!(
-                "catalog numbers differ between lines: {catalog_1} (line 1) vs {catalog_2} (line 2)"
-            )));
+            return Err(TleError::CatalogMismatch { line1: catalog_1, line2: catalog_2 }.into());
         }
 
         let classification = col(l1, 8, 8).chars().next().unwrap_or('U');
         let international_designator = col(l1, 10, 17).trim().to_string();
 
-        let epoch_year = parse_u32(col(l1, 19, 20), "epoch year")?;
-        let epoch_day = parse_f64_loose(col(l1, 21, 32), "epoch day-of-year")?;
+        let epoch_year = parse_u32(&FieldSpec::new("epoch year", 1, 19, 20), l1)?;
+        let epoch_day = parse_f64_loose(&FieldSpec::new("epoch day-of-year", 1, 21, 32), l1)?;
         let epoch = parse_epoch(epoch_year, epoch_day)?;
 
-        let mean_motion_dot = parse_f64_loose(col(l1, 34, 43), "first derivative of mean motion")?;
-        let mean_motion_ddot = parse_assumed_exp(col(l1, 45, 52), "second derivative of mean motion")?;
-        let bstar = parse_assumed_exp(col(l1, 54, 61), "B* drag term")?;
-        let element_set_number = parse_u32(col(l1, 65, 68), "element set number")?;
+        let mean_motion_dot =
+            parse_f64_loose(&FieldSpec::new("first derivative of mean motion", 1, 34, 43), l1)?;
+        let mean_motion_ddot =
+            parse_assumed_exp(&FieldSpec::new("second derivative of mean motion", 1, 45, 52), l1)?;
+        let bstar = parse_assumed_exp(&FieldSpec::new("B* drag term", 1, 54, 61), l1)?;
+        let element_set_number =
+            parse_u32(&FieldSpec::new("element set number", 1, 65, 68), l1)?;
 
-        let inclination_deg = parse_f64_loose(col(l2, 9, 16), "inclination")?;
-        let raan_deg = parse_f64_loose(col(l2, 18, 25), "right ascension of ascending node")?;
-        let eccentricity = parse_eccentricity(col(l2, 27, 33))?;
-        let arg_perigee_deg = parse_f64_loose(col(l2, 35, 42), "argument of perigee")?;
-        let mean_anomaly_deg = parse_f64_loose(col(l2, 44, 51), "mean anomaly")?;
-        let mean_motion = parse_f64_loose(col(l2, 53, 63), "mean motion")?;
-        let revolution_number = parse_u32(col(l2, 64, 68), "revolution number")?;
+        let inclination_deg = parse_f64_loose(&FieldSpec::new("inclination", 2, 9, 16), l2)?;
+        let raan_deg =
+            parse_f64_loose(&FieldSpec::new("right ascension of ascending node", 2, 18, 25), l2)?;
+        let eccentricity = parse_eccentricity(&FieldSpec::new("eccentricity", 2, 27, 33), l2)?;
+        let arg_perigee_deg =
+            parse_f64_loose(&FieldSpec::new("argument of perigee", 2, 35, 42), l2)?;
+        let mean_anomaly_deg = parse_f64_loose(&FieldSpec::new("mean anomaly", 2, 44, 51), l2)?;
+        let mean_motion = parse_f64_loose(&FieldSpec::new("mean motion", 2, 53, 63), l2)?;
+        let revolution_number =
+            parse_u32(&FieldSpec::new("revolution number", 2, 64, 68), l2)?;
 
         Ok(Tle {
             name: name.map(|s| s.to_string()),
@@ -234,39 +414,29 @@ impl Tle {
 
 /// Validates one element-set line: ASCII, length, line number, and checksum. Returns the
 /// canonical 69-column slice on success.
-fn validate_line(line: &str, expected_number: char) -> Result<&str> {
+fn validate_line(line: &str, line_no: u8) -> std::result::Result<&str, TleError> {
+    let expected_number = (b'0' + line_no) as char;
     let trimmed = line.trim_end();
     if !trimmed.is_ascii() {
-        return Err(AstroError::SatelliteError(format!(
-            "line {expected_number} contains non-ASCII characters"
-        )));
+        return Err(TleError::NonAscii { line: line_no });
     }
     if trimmed.len() < 69 {
-        return Err(AstroError::SatelliteError(format!(
-            "line {expected_number} is too short: expected 69 columns, found {}",
-            trimmed.len()
-        )));
+        return Err(TleError::LineTooShort { line: line_no, found: trimmed.len() });
     }
     let line = &trimmed[..69];
 
     let actual_number = line.chars().next().unwrap();
     if actual_number != expected_number {
-        return Err(AstroError::SatelliteError(format!(
-            "expected line to start with '{expected_number}', found '{actual_number}'"
-        )));
+        return Err(TleError::WrongLineNumber { expected: expected_number, found: actual_number });
     }
 
-    let expected_checksum = tle_checksum(line);
-    let stated_checksum = col(line, 69, 69)
+    let computed = tle_checksum(line);
+    let check_text = col(line, 69, 69);
+    let stated = check_text
         .parse::<u32>()
-        .map_err(|_| AstroError::SatelliteError(format!(
-            "line {expected_number} checksum column is not a digit: '{}'",
-            col(line, 69, 69)
-        )))?;
-    if expected_checksum != stated_checksum {
-        return Err(AstroError::SatelliteError(format!(
-            "line {expected_number} checksum mismatch: computed {expected_checksum}, stated {stated_checksum}"
-        )));
+        .map_err(|_| TleError::ChecksumNotDigit { line: line_no, found: check_text.to_string() })?;
+    if computed != stated {
+        return Err(TleError::ChecksumMismatch { line: line_no, computed, stated });
     }
 
     Ok(line)
@@ -291,35 +461,69 @@ fn col(line: &str, start: usize, end: usize) -> &str {
     &line[start - 1..end]
 }
 
-fn parse_u32(field: &str, name: &str) -> Result<u32> {
-    field.trim().parse::<u32>().map_err(|_| {
-        AstroError::SatelliteError(format!("could not parse {name} from '{}'", field.trim()))
-    })
+/// Describes one fixed-column TLE field: its human-readable name, which line it lives on, and
+/// its 1-indexed inclusive column range. Centralizing this lets parse failures report exactly
+/// where the field is and what it should look like.
+struct FieldSpec {
+    name: &'static str,
+    line: u8,
+    start: usize,
+    end: usize,
+}
+
+impl FieldSpec {
+    fn new(name: &'static str, line: u8, start: usize, end: usize) -> Self {
+        FieldSpec { name, line, start, end }
+    }
+
+    /// Extracts this field's raw text from a validated 69-column line.
+    fn text<'a>(&self, line: &'a str) -> &'a str {
+        col(line, self.start, self.end)
+    }
+
+    /// Builds a [`TleError::Field`] for this field, recording what was found and why it failed.
+    fn error(&self, found: &str, reason: &str) -> TleError {
+        TleError::Field {
+            field: self.name.to_string(),
+            line: self.line,
+            start: self.start,
+            end: self.end,
+            found: found.to_string(),
+            reason: reason.to_string(),
+        }
+    }
+}
+
+fn parse_u32(spec: &FieldSpec, line: &str) -> std::result::Result<u32, TleError> {
+    let text = spec.text(line);
+    text.trim()
+        .parse::<u32>()
+        .map_err(|_| spec.error(text.trim(), "expected a base-10 integer"))
 }
 
 /// Parses a decimal that may use a leading decimal point (e.g. `-.00002218`).
-fn parse_f64_loose(field: &str, name: &str) -> Result<f64> {
-    let s = field.trim();
+fn parse_f64_loose(spec: &FieldSpec, line: &str) -> std::result::Result<f64, TleError> {
+    let s = spec.text(line).trim();
     if s.is_empty() {
         return Ok(0.0);
     }
-    let s = s.strip_prefix('+').unwrap_or(s);
-    let normalized = if let Some(rest) = s.strip_prefix("-.") {
+    let body = s.strip_prefix('+').unwrap_or(s);
+    let normalized = if let Some(rest) = body.strip_prefix("-.") {
         format!("-0.{rest}")
-    } else if let Some(rest) = s.strip_prefix('.') {
+    } else if let Some(rest) = body.strip_prefix('.') {
         format!("0.{rest}")
     } else {
-        s.to_string()
+        body.to_string()
     };
-    normalized.parse::<f64>().map_err(|_| {
-        AstroError::SatelliteError(format!("could not parse {name} from '{}'", field.trim()))
-    })
+    normalized
+        .parse::<f64>()
+        .map_err(|_| spec.error(s, "expected a decimal number (an implied leading point is allowed, e.g. `-.00002218`)"))
 }
 
 /// Parses the TLE "assumed decimal point with exponent" notation (e.g. `-31515-4` →
 /// `-0.31515 × 10⁻⁴`). An empty or all-zero field yields `0.0`.
-fn parse_assumed_exp(field: &str, name: &str) -> Result<f64> {
-    let s = field.trim();
+fn parse_assumed_exp(spec: &FieldSpec, line: &str) -> std::result::Result<f64, TleError> {
+    let s = spec.text(line).trim();
     if s.is_empty() {
         return Ok(0.0);
     }
@@ -328,52 +532,47 @@ fn parse_assumed_exp(field: &str, name: &str) -> Result<f64> {
         b'+' => (1.0, &s[1..]),
         _ => (1.0, s),
     };
-    let exp_pos = body.rfind(|c| c == '+' || c == '-').ok_or_else(|| {
-        AstroError::SatelliteError(format!("could not parse {name} (missing exponent) from '{s}'"))
+    let exp_pos = body.rfind(['+', '-']).ok_or_else(|| {
+        spec.error(s, "missing exponent sign in assumed-decimal notation (e.g. `-31515-4` means -0.31515e-4)")
     })?;
     let (mantissa_digits, exp_str) = body.split_at(exp_pos);
     if mantissa_digits.is_empty() {
-        return Err(AstroError::SatelliteError(format!(
-            "could not parse {name} (empty mantissa) from '{s}'"
-        )));
+        return Err(spec.error(s, "empty mantissa in assumed-decimal notation"));
     }
     let mantissa = format!("0.{mantissa_digits}")
         .parse::<f64>()
-        .map_err(|_| AstroError::SatelliteError(format!("could not parse {name} mantissa from '{s}'")))?;
+        .map_err(|_| spec.error(s, "non-numeric mantissa in assumed-decimal notation"))?;
     let exponent = exp_str
         .parse::<i32>()
-        .map_err(|_| AstroError::SatelliteError(format!("could not parse {name} exponent from '{s}'")))?;
+        .map_err(|_| spec.error(s, "non-numeric exponent in assumed-decimal notation"))?;
     Ok(sign * mantissa * 10f64.powi(exponent))
 }
 
 /// Parses the eccentricity field, which carries an implied leading decimal point
 /// (e.g. `0001413` → `0.0001413`).
-fn parse_eccentricity(field: &str) -> Result<f64> {
-    let s = field.trim();
-    format!("0.{s}").parse::<f64>().map_err(|_| {
-        AstroError::SatelliteError(format!("could not parse eccentricity from '{s}'"))
-    })
+fn parse_eccentricity(spec: &FieldSpec, line: &str) -> std::result::Result<f64, TleError> {
+    let s = spec.text(line).trim();
+    format!("0.{s}")
+        .parse::<f64>()
+        .map_err(|_| spec.error(s, "expected an implied-decimal fraction of digits only (e.g. `0001413` → 0.0001413)"))
 }
 
 /// Converts a 2-digit TLE epoch year and fractional day-of-year into a UTC datetime.
 ///
 /// Per TLE convention, years 57–99 map to 1957–1999 and 00–56 map to 2000–2056.
-fn parse_epoch(two_digit_year: u32, day_of_year: f64) -> Result<DateTime<Utc>> {
+fn parse_epoch(two_digit_year: u32, day_of_year: f64) -> std::result::Result<DateTime<Utc>, TleError> {
     let year = if two_digit_year < 57 {
         2000 + two_digit_year as i32
     } else {
         1900 + two_digit_year as i32
     };
-    if !(day_of_year.is_finite() && day_of_year >= 1.0 && day_of_year < 367.0) {
-        return Err(AstroError::SatelliteError(format!(
-            "epoch day-of-year out of range: {day_of_year}"
-        )));
+    if !(day_of_year.is_finite() && (1.0..367.0).contains(&day_of_year)) {
+        return Err(TleError::EpochOutOfRange { day_of_year });
     }
     let ordinal = day_of_year.floor() as u32;
     let fraction = day_of_year - ordinal as f64;
-    let date = NaiveDate::from_yo_opt(year, ordinal).ok_or_else(|| {
-        AstroError::SatelliteError(format!("invalid epoch date: year {year}, day {ordinal}"))
-    })?;
+    let date = NaiveDate::from_yo_opt(year, ordinal)
+        .ok_or(TleError::InvalidEpochDate { year, ordinal })?;
     let nanos = (fraction * 86_400.0 * 1e9).round() as i64;
     let naive = date.and_hms_opt(0, 0, 0).unwrap() + chrono::Duration::nanoseconds(nanos);
     Ok(Utc.from_utc_datetime(&naive))
@@ -501,13 +700,20 @@ mod tests {
         let bad_line1 = format!("{}0", &ISS_LINE1[..ISS_LINE1.len() - 1]);
         let err = Tle::from_lines(Some(ISS_NAME), &bad_line1, ISS_LINE2)
             .expect_err("corrupted checksum must be rejected");
+        assert!(
+            matches!(err, AstroError::Tle(TleError::ChecksumMismatch { line: 1, .. })),
+            "unexpected error: {err:?}"
+        );
+        // The message must teach the rule, not merely report a mismatch.
         let msg = err.to_string();
-        assert!(msg.contains("checksum mismatch"), "unexpected error: {msg}");
+        assert!(msg.contains("modulo-10"), "missing the checksum rule: {msg}");
+        assert!(err.hint().is_some(), "checksum errors should carry a hint");
     }
 
     #[test]
     fn rejects_wrong_line_count() {
         let err = Tle::parse(ISS_LINE1).expect_err("single line must be rejected");
+        assert!(matches!(err, AstroError::Tle(TleError::WrongLineCount { found: 1 })));
         assert!(err.to_string().contains("2-line or 3-line"));
     }
 
@@ -515,7 +721,11 @@ mod tests {
     fn rejects_short_line() {
         let err = Tle::from_lines(None, "1 25544U", ISS_LINE2)
             .expect_err("truncated line must be rejected");
-        assert!(err.to_string().contains("too short"));
+        assert!(matches!(err, AstroError::Tle(TleError::LineTooShort { line: 1, .. })));
+        // The message must state both the requirement and the underlying fixed-column rule.
+        let msg = err.to_string();
+        assert!(msg.contains("69 are required"), "missing the column requirement: {msg}");
+        assert!(msg.contains("fixed-column"), "missing the fixed-column rule: {msg}");
     }
 
     #[test]
@@ -523,7 +733,34 @@ mod tests {
         // Pass line 2 where line 1 is expected.
         let err = Tle::from_lines(None, ISS_LINE2, ISS_LINE2)
             .expect_err("misordered lines must be rejected");
-        assert!(err.to_string().contains("start with '1'"));
+        assert!(matches!(
+            err,
+            AstroError::Tle(TleError::WrongLineNumber { expected: '1', found: '2' })
+        ));
+        assert!(err.to_string().contains("begin with '1'"));
+    }
+
+    #[test]
+    fn rejects_non_numeric_field_naming_columns() {
+        // Corrupt the inclination field (line 2, columns 9–16) with letters, then repair the
+        // check digit so the failure is attributed to field parsing rather than the checksum.
+        let mut chars: Vec<char> = ISS_LINE2.chars().collect();
+        for c in chars.iter_mut().take(16).skip(8) {
+            *c = 'X';
+        }
+        let body: String = chars[..68].iter().collect();
+        let line2 = format!("{body}{}", tle_checksum(&body));
+
+        let err = Tle::from_lines(None, ISS_LINE1, &line2)
+            .expect_err("a non-numeric field must be rejected");
+        assert!(
+            matches!(&err, AstroError::Tle(TleError::Field { field, line: 2, start: 9, end: 16, .. }) if field == "inclination"),
+            "unexpected error: {err:?}"
+        );
+        // The message must name the field and its column range.
+        let msg = err.to_string();
+        assert!(msg.contains("inclination"), "missing field name: {msg}");
+        assert!(msg.contains("columns 9-16"), "missing column range: {msg}");
     }
 
     #[test]

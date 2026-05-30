@@ -90,7 +90,20 @@ enum Commands {
     },
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(err) = run() {
+        // Present errors as legible, teaching-oriented text on stderr (rather than the default
+        // `Debug` rendering) and exit non-zero. Where the error knows how the input should be
+        // shaped, a `Hint:` line follows with the correction.
+        eprintln!("Error: {err}");
+        if let Some(hint) = err.hint() {
+            eprintln!("Hint:  {hint}");
+        }
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
     init_logging(cli.verbose);
     

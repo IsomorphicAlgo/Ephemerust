@@ -1,4 +1,4 @@
-# CLI Astro Calc
+# CLI_Rust_Astronomical_Calculator
 
 A command-line astronomy and orbital mechanics calculator built in Rust.
 

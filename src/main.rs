@@ -51,12 +51,27 @@ enum Commands {
         time: Option<String>,
     },
     Orbital {
+        /// Semi-major axis in km
         #[arg(short, long)]
         semi_major: f64,
+        /// Orbital eccentricity (0-1)
         #[arg(short, long)]
         eccentricity: f64,
+        /// Inclination in degrees
         #[arg(short, long)]
         inclination: f64,
+        /// Longitude of ascending node (Ω) in degrees
+        #[arg(long, default_value_t = 0.0)]
+        raan: f64,
+        /// Argument of periapsis (ω) in degrees
+        #[arg(long = "arg-periapsis", default_value_t = 0.0)]
+        arg_periapsis: f64,
+        /// Mean anomaly (M) in degrees
+        #[arg(long, default_value_t = 0.0)]
+        mean_anomaly: f64,
+        /// Standard gravitational parameter μ in km³/s² (default: Earth)
+        #[arg(long, default_value_t = 398600.4418)]
+        mu: f64,
     },
 }
 
@@ -146,8 +161,31 @@ fn main() -> Result<()> {
             println!("JD:   {:.6}", jd);
             println!("GMST: {:02}:{:02}:{:02}", h, m, s);
         },
-        Commands::Orbital { semi_major, eccentricity, inclination } => {
-            println!("Orbital: a={} km, e={}, i={}°", semi_major, eccentricity, inclination);
+        Commands::Orbital { semi_major, eccentricity, inclination, raan, arg_periapsis, mean_anomaly, mu } => {
+            use cli_astro_calc::orbital::{OrbitalElements, orbital_period, mean_to_true_anomaly, elements_to_state_vector};
+
+            let elements = OrbitalElements {
+                semi_major_axis: semi_major,
+                eccentricity,
+                inclination,
+                longitude_ascending_node: raan,
+                argument_periapsis: arg_periapsis,
+                mean_anomaly,
+            };
+
+            let period_s = orbital_period(semi_major, mu);
+            let true_anomaly = mean_to_true_anomaly(mean_anomaly, eccentricity);
+            let state = elements_to_state_vector(elements, mu)?;
+
+            println!("Elements: a={} km, e={}, i={}°, Ω={}°, ω={}°, M={}°",
+                semi_major, eccentricity, inclination, raan, arg_periapsis, mean_anomaly);
+            println!("Period:   {:.1} s ({:.2} min)", period_s, period_s / 60.0);
+            println!("True anomaly: {:.4}°", true_anomaly);
+            println!("State vector (inertial frame):");
+            println!("  Position [km]:   x={:.3} y={:.3} z={:.3}",
+                state.position[0], state.position[1], state.position[2]);
+            println!("  Velocity [km/s]: vx={:.6} vy={:.6} vz={:.6}",
+                state.velocity[0], state.velocity[1], state.velocity[2]);
         },
     }
     

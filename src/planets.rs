@@ -203,9 +203,10 @@ pub fn calculate_planet_position(planet: Planet, julian_date: f64) -> Result<RaD
     
     info!("Calculating {} position at JD {:.6}", planet.name(), julian_date);
     
-    // Calculate time in Julian centuries from J2000.0
-    let t = (julian_date - J2000) / 36525.0;
-    info!("Time in Julian centuries from J2000.0: t = {:.10}", t);
+    // Calculate time in Julian millennia from J2000.0 (VSOP87 time argument).
+    // VSOP87 series use τ = (JD - J2000.0) / 365250, NOT Julian centuries.
+    let t = (julian_date - J2000) / 365250.0;
+    info!("Time in Julian millennia from J2000.0: t = {:.10}", t);
     
     // Evaluate VSOP87 series for L, B, R
     let heliocentric = calculate_heliocentric_ecliptic(&vsop87_data, t)?;
@@ -388,8 +389,9 @@ fn calculate_radius(radius_series: &Vsop87Series, t: f64) -> f64 {
 /// The evaluated series value (in radians for L/B, AU for R)
 /// 
 /// # Formula
-/// result = (L0 + L1×t + L2×t² + L3×t³ + L4×t⁴ + L5×t⁵) / 10^8
-/// where each Ln = Σ(A × cos(B + C × t))
+/// result = L0 + L1×t + L2×t² + L3×t³ + L4×t⁴ + L5×t⁵
+/// where each Ln = Σ(A × cos(B + C × t)) and t is in Julian millennia from J2000.0.
+/// Coefficients are VSOP87 spherical values stored directly in radians (L, B) or AU (R).
 /// 
 /// # Logging
 /// Logs at debug level: series values, intermediate calculations
@@ -437,13 +439,15 @@ fn evaluate_vsop87_series(series: &Vsop87Series, t: f64) -> f64 {
                series.series_5.as_ref().unwrap().len(), s5);
     }
     
-    // Combine series with time powers: (L0 + L1×t + L2×t² + L3×t³ + L4×t⁴ + L5×t⁵) / 10^8
+    // Combine series with time powers: L = L0 + L1×t + L2×t² + L3×t³ + L4×t⁴ + L5×t⁵
+    // (VSOP87 spherical coefficients are stored directly in radians/AU; t is in Julian
+    // millennia from J2000.0, so no additional scaling is applied here.)
     let t2 = t * t;
     let t3 = t2 * t;
     let t4 = t3 * t;
     let t5 = t4 * t;
     
-    let result = (s0 + s1 * t + s2 * t2 + s3 * t3 + s4 * t4 + s5 * t5) / 1e8;
+    let result = s0 + s1 * t + s2 * t2 + s3 * t3 + s4 * t4 + s5 * t5;
     
     debug!("VSOP87 series combination: t={:.10}, result={:.10}", t, result);
     
@@ -693,6 +697,26 @@ pub(crate) fn get_planet_vsop87_data(planet: Planet) -> Option<PlanetVsop87Data>
     }
 }
 
+/// Convenience constructor for a single VSOP87 term (amplitude, phase, frequency).
+fn vt(amplitude: f64, phase: f64, frequency: f64) -> Vsop87Term {
+    Vsop87Term { amplitude, phase, frequency }
+}
+
+/// Builds a VSOP87 series from the L0/L1/L2 (or B/R equivalent) sub-series.
+///
+/// Higher-order sub-series (series_3 and above) are unused by the truncated data set
+/// and are left empty.
+fn series(s0: Vec<Vsop87Term>, s1: Vec<Vsop87Term>, s2: Vec<Vsop87Term>) -> Vsop87Series {
+    Vsop87Series {
+        series_0: s0,
+        series_1: s1,
+        series_2: s2,
+        series_3: vec![],
+        series_4: None,
+        series_5: None,
+    }
+}
+
 /// Gets simplified VSOP87 data for Mercury.
 /// 
 /// This is a truncated version using only the most significant terms.
@@ -784,117 +808,383 @@ fn get_mercury_vsop87_data() -> PlanetVsop87Data {
     }
 }
 
-/// Gets simplified VSOP87 data for Venus.
-/// 
-/// **Note**: This is a placeholder implementation.
-/// Venus VSOP87 coefficients will be populated in a future update.
-/// Currently returns empty series, which will cause planet position calculations to fail.
-/// 
-/// To implement: Add truncated VSOP87 coefficients for Venus following the same
-/// structure as Mercury's implementation.
+/// Gets truncated VSOP87D data for Venus (leading terms).
 fn get_venus_vsop87_data() -> PlanetVsop87Data {
-    // Placeholder: Venus VSOP87 coefficients not yet implemented
-    // TODO: Add truncated VSOP87 coefficients for Venus
-    // For now, return minimal data structure
     PlanetVsop87Data {
-        longitude: Vsop87Series {
-            series_0: vec![],
-            series_1: vec![],
-            series_2: vec![],
-            series_3: vec![],
-            series_4: None,
-            series_5: None,
-        },
-        latitude: Vsop87Series {
-            series_0: vec![],
-            series_1: vec![],
-            series_2: vec![],
-            series_3: vec![],
-            series_4: None,
-            series_5: None,
-        },
-        radius: Vsop87Series {
-            series_0: vec![],
-            series_1: vec![],
-            series_2: vec![],
-            series_3: vec![],
-            series_4: None,
-            series_5: None,
-        },
+        longitude: series(
+            vec![
+                vt(3.17614666774, 0.0, 0.0),
+                vt(0.01353968419, 5.59313319619, 10213.28554621100),
+                vt(0.00089891645, 5.30650047764, 20426.57109242200),
+                vt(0.00005477201, 4.41630661466, 7860.41939243920),
+                vt(0.00003455732, 2.69963892930, 11790.62908865880),
+                vt(0.00002372061, 2.99377538641, 3930.20969621960),
+            ],
+            vec![
+                vt(10213.52943052898, 0.0, 0.0),
+                vt(0.00095707712, 2.46424448979, 10213.28554621100),
+                vt(0.00002104569, 5.54791255794, 20426.57109242200),
+            ],
+            vec![
+                vt(0.00054127076, 0.0, 0.0),
+                vt(0.00003891460, 0.34514360047, 10213.28554621100),
+            ],
+        ),
+        latitude: series(
+            vec![
+                vt(0.05923638472, 0.26702775812, 10213.28554621100),
+                vt(0.00040107978, 1.14737178112, 20426.57109242200),
+                vt(0.00032814918, 3.14159265359, 0.0),
+            ],
+            vec![
+                vt(0.00287821243, 1.88964962838, 10213.28554621100),
+            ],
+            vec![],
+        ),
+        radius: series(
+            vec![
+                vt(0.72334820891, 0.0, 0.0),
+                vt(0.00489824182, 4.02151831717, 10213.28554621100),
+                vt(0.00001658058, 4.90206728031, 20426.57109242200),
+            ],
+            vec![
+                vt(0.00034551041, 0.89198706276, 10213.28554621100),
+            ],
+            vec![],
+        ),
     }
 }
 
-/// Gets simplified VSOP87 data for Earth.
-/// 
-/// **Note**: This is a placeholder implementation.
-/// Earth's VSOP87 coefficients are required for geocentric coordinate conversion.
-/// Currently returns empty series, which will cause planet position calculations to fail.
-/// 
-/// **Critical**: Earth's position is needed to convert from heliocentric to geocentric coordinates.
-/// Without Earth's VSOP87 data, planet position calculations cannot complete.
-/// 
-/// To implement: Add truncated VSOP87 coefficients for Earth following the same
-/// structure as Mercury's implementation.
+/// Gets truncated VSOP87D data for Earth (leading terms).
+///
+/// Earth's heliocentric position is required to convert other planets' heliocentric
+/// coordinates into geocentric coordinates, so this data underpins every planet
+/// position calculation.
 fn get_earth_vsop87_data() -> PlanetVsop87Data {
-    // Placeholder: Earth VSOP87 coefficients not yet implemented
-    // TODO: Add truncated VSOP87 coefficients for Earth
-    // Earth's position is critical for geocentric conversion
-    get_venus_vsop87_data() // Placeholder
+    PlanetVsop87Data {
+        longitude: series(
+            vec![
+                vt(1.75347045673, 0.0, 0.0),
+                vt(0.03341656456, 4.66925680417, 6283.07584999140),
+                vt(0.00034894275, 4.62610241759, 12566.15169998280),
+                vt(0.00003497056, 2.74411800971, 5753.38488489680),
+                vt(0.00003417571, 2.82886579606, 3.52311834900),
+                vt(0.00003135896, 3.62767041758, 77713.77146812050),
+                vt(0.00002676218, 4.41808351397, 7860.41939243920),
+                vt(0.00002342687, 6.13516237631, 3930.20969621960),
+                vt(0.00001324292, 0.74246356352, 11506.76976979360),
+                vt(0.00001273166, 2.03709655772, 529.69096509460),
+                vt(0.00001199167, 1.10962944315, 1577.34354244780),
+                vt(0.00000990250, 5.23268129594, 5884.92684658320),
+                vt(0.00000901855, 2.04505446933, 26.29831979980),
+                vt(0.00000857223, 3.50849152283, 398.14900340820),
+            ],
+            vec![
+                vt(6283.31966747491, 0.0, 0.0),
+                vt(0.00206058863, 2.67823455584, 6283.07584999140),
+                vt(0.00004303430, 2.63512650414, 12566.15169998280),
+            ],
+            vec![
+                vt(0.00052918870, 0.0, 0.0),
+                vt(0.00008719837, 1.07209665242, 6283.07584999140),
+                vt(0.00000309125, 0.86728818832, 12566.15169998280),
+            ],
+        ),
+        latitude: series(
+            vec![
+                vt(0.00000279620, 3.19870156017, 84334.66158130829),
+                vt(0.00000101643, 5.42248619256, 5507.55323866740),
+                vt(0.00000080445, 3.88013204458, 5223.69391980220),
+            ],
+            vec![],
+            vec![],
+        ),
+        radius: series(
+            vec![
+                vt(1.00013988784, 0.0, 0.0),
+                vt(0.01670699632, 3.09846350258, 6283.07584999140),
+                vt(0.00013956024, 3.05524609456, 12566.15169998280),
+                vt(0.00003083720, 5.19846674381, 77713.77146812050),
+                vt(0.00001628463, 1.17387558054, 5753.38488489680),
+                vt(0.00001575572, 2.84685214877, 7860.41939243920),
+            ],
+            vec![
+                vt(0.00103018608, 1.10748969588, 6283.07584999140),
+                vt(0.00001721238, 1.06442301418, 12566.15169998280),
+            ],
+            vec![
+                vt(0.00004359385, 5.78455133738, 6283.07584999140),
+            ],
+        ),
+    }
 }
 
-/// Gets simplified VSOP87 data for Mars.
-/// 
-/// **Note**: This is a placeholder implementation.
-/// Mars VSOP87 coefficients will be populated in a future update.
-/// Currently returns empty series, which will cause planet position calculations to fail.
+/// Gets truncated VSOP87D data for Mars (leading terms).
 fn get_mars_vsop87_data() -> PlanetVsop87Data {
-    // Placeholder: Mars VSOP87 coefficients not yet implemented
-    // TODO: Add truncated VSOP87 coefficients for Mars
-    get_venus_vsop87_data() // Placeholder
+    PlanetVsop87Data {
+        longitude: series(
+            vec![
+                vt(6.20347711581, 0.0, 0.0),
+                vt(0.18656368093, 5.05037100303, 3340.61242669980),
+                vt(0.01108216816, 5.40099836958, 6681.22485339960),
+                vt(0.00091798406, 5.75478744674, 10021.83728009940),
+                vt(0.00027744987, 5.97049513147, 3.52311834900),
+                vt(0.00012315897, 0.84956094002, 2810.92146160520),
+                vt(0.00010610235, 2.93958560338, 2281.23049651060),
+                vt(0.00008926784, 4.15697846427, 0.01725365220),
+            ],
+            vec![
+                vt(3340.61242700512, 0.0, 0.0),
+                vt(0.01457554523, 3.60433733236, 3340.61242669980),
+                vt(0.00168414711, 3.92318567804, 6681.22485339960),
+                vt(0.00020622975, 4.26108844583, 10021.83728009940),
+            ],
+            vec![
+                vt(0.00058152577, 2.04961712429, 3340.61242669980),
+                vt(0.00013459579, 2.45738706163, 6681.22485339960),
+            ],
+        ),
+        latitude: series(
+            vec![
+                vt(0.03197134986, 3.76832042431, 3340.61242669980),
+                vt(0.00298033234, 4.10616996305, 6681.22485339960),
+                vt(0.00289104742, 0.0, 0.0),
+                vt(0.00031365539, 4.44651053090, 10021.83728009940),
+            ],
+            vec![
+                vt(0.00217310991, 6.04472194776, 3340.61242669980),
+            ],
+            vec![],
+        ),
+        radius: series(
+            vec![
+                vt(1.53033488271, 0.0, 0.0),
+                vt(0.14184953160, 3.47971283528, 3340.61242669980),
+                vt(0.00660776362, 3.81783443019, 6681.22485339960),
+                vt(0.00046179117, 4.15595316782, 10021.83728009940),
+            ],
+            vec![
+                vt(0.01107433345, 2.03250524857, 3340.61242669980),
+                vt(0.00103175887, 3.05705419660, 6681.22485339960),
+            ],
+            vec![
+                vt(0.00044242249, 0.47930604954, 3340.61242669980),
+            ],
+        ),
+    }
 }
 
-/// Gets simplified VSOP87 data for Jupiter.
-/// 
-/// **Note**: This is a placeholder implementation.
-/// Jupiter VSOP87 coefficients will be populated in a future update.
-/// Currently returns empty series, which will cause planet position calculations to fail.
+/// Gets truncated VSOP87D data for Jupiter (leading terms).
 fn get_jupiter_vsop87_data() -> PlanetVsop87Data {
-    // Placeholder: Jupiter VSOP87 coefficients not yet implemented
-    // TODO: Add truncated VSOP87 coefficients for Jupiter
-    get_venus_vsop87_data() // Placeholder
+    PlanetVsop87Data {
+        longitude: series(
+            vec![
+                vt(0.59954691494, 0.0, 0.0),
+                vt(0.09695898719, 5.06191793158, 529.69096509460),
+                vt(0.00573610142, 1.44406205629, 7.11354700080),
+                vt(0.00306389205, 5.41734730184, 1059.38193018920),
+                vt(0.00097178296, 4.14264726552, 632.78373931320),
+                vt(0.00072903078, 3.64042916389, 522.57741809380),
+                vt(0.00064263975, 3.41145165351, 103.09277421860),
+                vt(0.00039806064, 2.29376740788, 419.48464387520),
+            ],
+            vec![
+                vt(529.69096508814, 0.0, 0.0),
+                vt(0.00489503243, 4.22082939470, 529.69096509460),
+                vt(0.00228917222, 6.02646855621, 7.11354700080),
+                vt(0.00030099479, 4.54540782858, 1059.38193018920),
+            ],
+            vec![
+                vt(0.00047233601, 4.32148536482, 7.11354700080),
+                vt(0.00030649436, 2.92977788700, 529.69096509460),
+            ],
+        ),
+        latitude: series(
+            vec![
+                vt(0.02268615702, 3.55852606721, 529.69096509460),
+                vt(0.00109971634, 3.90809347197, 1059.38193018920),
+                vt(0.00110090358, 0.0, 0.0),
+                vt(0.00008101428, 3.60509572885, 522.57741809380),
+            ],
+            vec![
+                vt(0.00078203446, 1.52377859742, 529.69096509460),
+            ],
+            vec![],
+        ),
+        radius: series(
+            vec![
+                vt(5.20887429326, 0.0, 0.0),
+                vt(0.25209327119, 3.49108639871, 529.69096509460),
+                vt(0.00610599976, 3.84115365948, 1059.38193018920),
+                vt(0.00282029458, 2.57419881293, 632.78373931320),
+                vt(0.00187647346, 2.07590383214, 522.57741809380),
+            ],
+            vec![
+                vt(0.01271801520, 2.64937512894, 529.69096509460),
+                vt(0.00061661816, 3.00076460387, 1059.38193018920),
+            ],
+            vec![
+                vt(0.00078203446, 1.52377859742, 529.69096509460),
+            ],
+        ),
+    }
 }
 
-/// Gets simplified VSOP87 data for Saturn.
-/// 
-/// **Note**: This is a placeholder implementation.
-/// Saturn VSOP87 coefficients will be populated in a future update.
-/// Currently returns empty series, which will cause planet position calculations to fail.
+/// Gets truncated VSOP87D data for Saturn (leading terms).
 fn get_saturn_vsop87_data() -> PlanetVsop87Data {
-    // Placeholder: Saturn VSOP87 coefficients not yet implemented
-    // TODO: Add truncated VSOP87 coefficients for Saturn
-    get_venus_vsop87_data() // Placeholder
+    PlanetVsop87Data {
+        longitude: series(
+            vec![
+                vt(0.87401354025, 0.0, 0.0),
+                vt(0.11107659762, 3.96205090159, 213.29909543800),
+                vt(0.01414150957, 4.58581516874, 7.11354700080),
+                vt(0.00398379389, 0.52112032699, 206.18554843720),
+                vt(0.00350769243, 3.30329907896, 426.59819087600),
+                vt(0.00206816305, 0.24658372002, 103.09277421860),
+                vt(0.00079271300, 3.84007056878, 220.41264243880),
+                vt(0.00023990355, 4.66976924553, 110.20632121940),
+            ],
+            vec![
+                vt(213.29909521690, 0.0, 0.0),
+                vt(0.01297370862, 1.82834923978, 213.29909543800),
+                vt(0.00564345393, 2.88499717272, 7.11354700080),
+                vt(0.00093734369, 1.06311793502, 426.59819087600),
+            ],
+            vec![
+                vt(0.00116441330, 1.17988132879, 7.11354700080),
+                vt(0.00091841837, 0.07325195840, 213.29909543800),
+            ],
+        ),
+        latitude: series(
+            vec![
+                vt(0.04330678039, 3.60284428399, 213.29909543800),
+                vt(0.00240348302, 2.85238489373, 426.59819087600),
+                vt(0.00084745939, 0.0, 0.0),
+                vt(0.00030863357, 3.48441504555, 220.41264243880),
+            ],
+            vec![
+                vt(0.00397554613, 5.33289992556, 213.29909543800),
+            ],
+            vec![],
+        ),
+        radius: series(
+            vec![
+                vt(9.55758135486, 0.0, 0.0),
+                vt(0.52921382865, 2.39226219573, 213.29909543800),
+                vt(0.01873679867, 5.23549604660, 206.18554843720),
+                vt(0.01464663929, 1.64763042902, 426.59819087600),
+                vt(0.00821891141, 5.93520042303, 316.39186965660),
+            ],
+            vec![
+                vt(0.06182981340, 0.25843511480, 213.29909543800),
+                vt(0.00506577242, 0.71114625261, 206.18554843720),
+            ],
+            vec![
+                vt(0.00227714534, 3.41648670629, 213.29909543800),
+            ],
+        ),
+    }
 }
 
-/// Gets simplified VSOP87 data for Uranus.
-/// 
-/// **Note**: This is a placeholder implementation.
-/// Uranus VSOP87 coefficients will be populated in a future update.
-/// Currently returns empty series, which will cause planet position calculations to fail.
+/// Gets truncated VSOP87D data for Uranus (leading terms).
 fn get_uranus_vsop87_data() -> PlanetVsop87Data {
-    // Placeholder: Uranus VSOP87 coefficients not yet implemented
-    // TODO: Add truncated VSOP87 coefficients for Uranus
-    get_venus_vsop87_data() // Placeholder
+    PlanetVsop87Data {
+        longitude: series(
+            vec![
+                vt(5.48129294297, 0.0, 0.0),
+                vt(0.09260408234, 0.89106421507, 74.78159856730),
+                vt(0.01504247898, 3.62719260920, 1.48447270830),
+                vt(0.00365981674, 1.89962179044, 73.29712585900),
+                vt(0.00272328168, 3.35823706307, 149.56319713460),
+                vt(0.00070328461, 5.39254450063, 63.73589830340),
+                vt(0.00068892678, 6.09292483287, 76.26607127560),
+            ],
+            vec![
+                vt(74.78159860910, 0.0, 0.0),
+                vt(0.00154332863, 5.24158770553, 74.78159856730),
+                vt(0.00024456474, 1.71260334156, 1.48447270830),
+            ],
+            vec![
+                vt(0.00053033510, 0.0, 0.0),
+                vt(0.00002357844, 2.26014661705, 74.78159856730),
+            ],
+        ),
+        latitude: series(
+            vec![
+                vt(0.01346277648, 2.61877810547, 74.78159856730),
+                vt(0.00062341400, 5.08111189648, 149.56319713460),
+                vt(0.00061601196, 3.14159265359, 0.0),
+                vt(0.00009963722, 1.61603805646, 76.26607127560),
+            ],
+            vec![
+                vt(0.00034101978, 0.01321929936, 74.78159856730),
+            ],
+            vec![],
+        ),
+        radius: series(
+            vec![
+                vt(19.21264847206, 0.0, 0.0),
+                vt(0.88784984413, 5.60377527014, 74.78159856730),
+                vt(0.03440836562, 0.32836099706, 73.29712585900),
+                vt(0.02055653860, 1.78295159330, 149.56319713460),
+                vt(0.00649322410, 4.52247285911, 76.26607127560),
+            ],
+            vec![
+                vt(0.01479896629, 3.67205697578, 74.78159856730),
+            ],
+            vec![],
+        ),
+    }
 }
 
-/// Gets simplified VSOP87 data for Neptune.
-/// 
-/// **Note**: This is a placeholder implementation.
-/// Neptune VSOP87 coefficients will be populated in a future update.
-/// Currently returns empty series, which will cause planet position calculations to fail.
+/// Gets truncated VSOP87D data for Neptune (leading terms).
 fn get_neptune_vsop87_data() -> PlanetVsop87Data {
-    // Placeholder: Neptune VSOP87 coefficients not yet implemented
-    // TODO: Add truncated VSOP87 coefficients for Neptune
-    get_venus_vsop87_data() // Placeholder
+    PlanetVsop87Data {
+        longitude: series(
+            vec![
+                vt(5.31188633046, 0.0, 0.0),
+                vt(0.01798475530, 2.90101273050, 38.13303563780),
+                vt(0.01019727652, 0.48580922867, 1.48447270830),
+                vt(0.00124531845, 4.83008090682, 36.64856292950),
+                vt(0.00042064466, 5.41054993053, 2.96894541660),
+                vt(0.00037714584, 6.09221808686, 35.16409022120),
+            ],
+            vec![
+                vt(38.13303563957, 0.0, 0.0),
+                vt(0.00016604172, 4.86323329249, 1.48447270830),
+                vt(0.00015744045, 2.27887427527, 38.13303563780),
+            ],
+            vec![
+                vt(0.00053892649, 0.0, 0.0),
+                vt(0.00000281251, 1.19084538887, 38.13303563780),
+            ],
+        ),
+        latitude: series(
+            vec![
+                vt(0.03088622933, 1.44104372644, 38.13303563780),
+                vt(0.00027780087, 5.91271884599, 76.26607127560),
+                vt(0.00027623609, 0.0, 0.0),
+                vt(0.00015355489, 2.52123799551, 36.64856292950),
+            ],
+            vec![
+                vt(0.00227279214, 3.80793089870, 38.13303563780),
+            ],
+            vec![],
+        ),
+        radius: series(
+            vec![
+                vt(30.07013206102, 0.0, 0.0),
+                vt(0.27062259632, 1.32999459377, 38.13303563780),
+                vt(0.01691764014, 3.25186135653, 36.64856292950),
+                vt(0.00807830553, 5.18592878704, 1.48447270830),
+                vt(0.00537760510, 4.52113935896, 35.16409022120),
+            ],
+            vec![
+                vt(0.00236338502, 0.70497956691, 38.13303563780),
+            ],
+            vec![],
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -993,15 +1283,15 @@ mod tests {
             series_5: None,
         };
         
-        // At t=0: result = (1.0 + 0.5*0) / 10^8 = 1.0 / 10^8
+        // At t=0: result = 1.0 + 0.5*0 = 1.0
         let result_t0 = evaluate_vsop87_series(&series, 0.0);
-        let expected_t0 = 1.0 / 1e8;
+        let expected_t0 = 1.0;
         assert!((result_t0 - expected_t0).abs() < 1e-10, 
                 "Series at t=0: expected {}, got {}", expected_t0, result_t0);
         
-        // At t=1: result = (1.0 + 0.5*1) / 10^8 = 1.5 / 10^8
+        // At t=1: result = 1.0 + 0.5*1 = 1.5
         let result_t1 = evaluate_vsop87_series(&series, 1.0);
-        let expected_t1 = 1.5 / 1e8;
+        let expected_t1 = 1.5;
         assert!((result_t1 - expected_t1).abs() < 1e-10,
                 "Series at t=1: expected {}, got {}", expected_t1, result_t1);
     }
@@ -1086,17 +1376,17 @@ mod tests {
             series_5: None,
         };
         let result_t0 = evaluate_vsop87_series(&simple_series, 0.0);
-        assert!((result_t0 - 1.0 / 1e8).abs() < 1e-15, 
-                "Series at t=0 should equal constant term / 10^8");
+        assert!((result_t0 - 1.0).abs() < 1e-15, 
+                "Series at t=0 should equal constant term");
         
-        // Test with large t value (20 centuries from J2000.0)
+        // Test with large t value (20 millennia from J2000.0)
         let result_t20 = evaluate_vsop87_series(&simple_series, 20.0);
-        assert!((result_t20 - 1.0 / 1e8).abs() < 1e-15,
+        assert!((result_t20 - 1.0).abs() < 1e-15,
                 "Series with only constant term should be independent of t");
         
         // Test with negative t value (past epoch)
         let result_t_neg = evaluate_vsop87_series(&simple_series, -10.0);
-        assert!((result_t_neg - 1.0 / 1e8).abs() < 1e-15,
+        assert!((result_t_neg - 1.0).abs() < 1e-15,
                 "Series should handle negative time values");
     }
 
@@ -1117,16 +1407,16 @@ mod tests {
         };
         
         // At t = 0: cos(0) = 1.0, cos(π/2) = 0.0
-        // Result = (1.0 + 0.5*0*0) / 10^8 = 1.0 / 10^8
+        // Result = 1.0 + 0.5*0*0 = 1.0
         let result_t0 = evaluate_vsop87_series(&trig_series, 0.0);
-        assert!((result_t0 - 1.0 / 1e8).abs() < 1e-10,
+        assert!((result_t0 - 1.0).abs() < 1e-10,
                 "Trigonometric series at t=0 should be correct");
         
         // At t = π/2: cos(π/2) = 0.0, cos(π/2 + π/2) = cos(π) = -1.0
-        // Result = (0.0 + 0.5*(π/2)*(-1.0)) / 10^8
+        // Result = 0.0 + 0.5*(π/2)*(-1.0)
         let t_pi2 = std::f64::consts::PI / 2.0;
         let result_t_pi2 = evaluate_vsop87_series(&trig_series, t_pi2);
-        let expected = (0.0 + 0.5 * t_pi2 * (-1.0)) / 1e8;
+        let expected = 0.0 + 0.5 * t_pi2 * (-1.0);
         assert!((result_t_pi2 - expected).abs() < 1e-10,
                 "Trigonometric series at t=π/2 should be correct");
     }
@@ -1521,6 +1811,47 @@ mod tests {
             let error_msg = result.unwrap_err().to_string();
             assert!(error_msg.contains("Earth") || error_msg.contains("VSOP87"),
                     "Error should mention Earth or VSOP87 data");
+        }
+    }
+
+    #[test]
+    fn test_earth_radius_near_one_au() {
+        // Earth's heliocentric distance must stay close to 1 AU (perihelion ~0.983,
+        // aphelion ~1.017). This guards the VSOP87 scaling/time-unit convention.
+        let data = get_planet_vsop87_data(Planet::Earth).unwrap();
+        for t in [-0.05, 0.0, 0.024, 0.05] {
+            // t in Julian millennia
+            let h = calculate_heliocentric_ecliptic(&data, t).unwrap();
+            assert!(h.radius > 0.98 && h.radius < 1.02,
+                    "Earth radius should be ~1 AU, got {} AU at t={}", h.radius, t);
+        }
+    }
+
+    #[test]
+    fn test_geocentric_positions_match_reference_j2000() {
+        // Geocentric RA/Dec at JD 2451545.0 (2000-01-01 12:00 UTC), compared to JPL Horizons.
+        // Tolerances are generous to allow for the truncated VSOP87D series, but tight enough
+        // to catch the scaling/time-unit regressions that previously broke planet positions.
+        let jd = 2451545.0;
+        let cases = [
+            (Planet::Mercury, 18.14, -24.4),
+            (Planet::Venus, 15.99, -18.5),
+            (Planet::Mars, 22.03, -13.2),
+            (Planet::Jupiter, 1.59, 8.6),
+            (Planet::Saturn, 2.58, 12.6),
+            (Planet::Uranus, 21.17, -17.0),
+            (Planet::Neptune, 20.36, -19.2),
+        ];
+        for (planet, ra_h, dec_d) in cases {
+            let p = calculate_planet_position(planet, jd).unwrap();
+            let mut dra = (p.ra - ra_h).abs();
+            if dra > 12.0 {
+                dra = 24.0 - dra; // handle RA wrap-around
+            }
+            assert!(dra < 0.5,
+                    "{} RA should be ~{}h, got {}h", planet.name(), ra_h, p.ra);
+            assert!((p.dec - dec_d).abs() < 1.5,
+                    "{} Dec should be ~{}°, got {}°", planet.name(), dec_d, p.dec);
         }
     }
 }

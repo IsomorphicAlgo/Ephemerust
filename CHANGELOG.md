@@ -15,6 +15,8 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/).
 - **Planet positions for all eight planets** via truncated VSOP87D, including Earth's
   series (required for the geocentric conversion). Geocentric RA/Dec agrees with JPL
   Horizons to within a few arcminutes at J2000.0.
+- **Planet rise/set times** — the `rise-set` command now supports planets in addition to the
+  Sun and Moon, using a shared rise/set routine with a point-source horizon correction.
 
 ### Fixed
 
@@ -28,7 +30,6 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/).
 
 See [docs/roadmap.md](docs/roadmap.md):
 
-- Implement planet rise/set times (currently returns an error).
 - Extend the VSOP87 series with more terms toward arcsecond accuracy.
 - Begin Part 2: the space-weather REST service.
 

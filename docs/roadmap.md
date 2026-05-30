@@ -6,14 +6,12 @@ service that can run on a home server rack and be reached remotely.
 ## Phase 1 — CLI astronomy tool ✅ (in progress, core complete)
 
 The command-line calculator for astronomical and orbital-mechanics calculations. Implemented
-and working: time systems, Sun/Moon positions and rise/set, RA/Dec ↔ Alt/Az, ECEF ↔ ECI,
-the `orbital` command (period, true anomaly, state vectors), and planet positions for all
-eight planets via truncated VSOP87D.
+and working: time systems, Sun/Moon/planet positions and rise/set, RA/Dec ↔ Alt/Az,
+ECEF ↔ ECI, the `orbital` command (period, true anomaly, state vectors), and planet
+positions for all eight planets via truncated VSOP87D.
 
 ### Remaining Phase 1 work
 
-- Implement planet rise/set times (positions are available; the rise/set algorithm needs to
-  accept them).
 - Extend the VSOP87 series with more terms to push accuracy toward the arcsecond level.
 - Optional: a dedicated `planets` subcommand for listing/comparing multiple planets.
 - Longer term: advanced orbital propagation; asteroid/comet positions; stellar positions

@@ -29,85 +29,88 @@ pub fn calculate_rise_set_times(
     match object {
         CelestialObject::Sun => calculate_solar_rise_set(location, date),
         CelestialObject::Moon => calculate_lunar_rise_set(location, date),
-        CelestialObject::Planet(_) => {
-            // Planet rise/set times not yet implemented
-            Err(crate::AstroError::CalculationError(
-                "Planet rise/set times not yet implemented".to_string()
-            ))
-        }
+        CelestialObject::Planet(planet) => calculate_planet_rise_set(planet, location, date),
+    }
+}
+
+/// Returns the UTC datetime for a given hour of a date's midnight (UTC).
+fn at_time(date: DateTime<Utc>, hour: u32, minute: u32, second: u32) -> DateTime<Utc> {
+    use chrono::NaiveTime;
+    let naive_date = date.naive_utc().date();
+    DateTime::from_naive_utc_and_offset(
+        naive_date.and_time(NaiveTime::from_hms_opt(hour, minute, second).unwrap()),
+        chrono::Utc,
+    )
+}
+
+/// Computes rise/set times from an object's equatorial position.
+///
+/// Shared by the Sun, Moon, and planet rise/set calculations. The only per-object
+/// difference is `altitude_correction_deg`, the apparent altitude of the object's center
+/// at the moment of rise/set (negative because of atmospheric refraction, plus the body's
+/// semidiameter for the Sun and Moon).
+///
+/// Returns `None` for both rise and set when the object is circumpolar (always up) or never
+/// rises at the given latitude.
+fn rise_set_from_position(
+    pos: crate::coordinates::RaDec,
+    location: ObserverLocation,
+    date: DateTime<Utc>,
+    altitude_correction_deg: f64,
+) -> RiseSetTimes {
+    use crate::time::{julian_date, local_sidereal_time, greenwich_mean_sidereal_time};
+
+    let midnight = at_time(date, 0, 0, 0);
+
+    let dec_rad = pos.dec.to_radians();
+    let lat_rad = location.latitude.to_radians();
+    let altitude_correction = altitude_correction_deg.to_radians();
+
+    let cos_hour_angle = (altitude_correction.sin() - lat_rad.sin() * dec_rad.sin())
+                       / (lat_rad.cos() * dec_rad.cos());
+
+    if cos_hour_angle.abs() > 1.0 {
+        return RiseSetTimes { rise: None, set: None };
+    }
+
+    let hour_angle_deg = cos_hour_angle.acos().to_degrees();
+    let lst_midnight = local_sidereal_time(
+        greenwich_mean_sidereal_time(julian_date(midnight)), location.longitude);
+    let transit_time = (pos.ra - lst_midnight).rem_euclid(24.0);
+
+    let rise_time_hours = (transit_time - hour_angle_deg / 15.0).rem_euclid(24.0);
+    let set_time_hours = (transit_time + hour_angle_deg / 15.0).rem_euclid(24.0);
+
+    RiseSetTimes {
+        rise: Some(midnight + chrono::Duration::seconds((rise_time_hours * 3600.0) as i64)),
+        set: Some(midnight + chrono::Duration::seconds((set_time_hours * 3600.0) as i64)),
     }
 }
 
 fn calculate_solar_rise_set(location: ObserverLocation, date: DateTime<Utc>) -> Result<RiseSetTimes> {
-    use crate::time::{julian_date, local_sidereal_time, greenwich_mean_sidereal_time};
-    use chrono::NaiveTime;
-    
-    let naive_date = date.naive_utc().date();
-    let midnight = DateTime::from_naive_utc_and_offset(
-        naive_date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap()), chrono::Utc);
-    let noon = DateTime::from_naive_utc_and_offset(
-        naive_date.and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap()), chrono::Utc);
-    
-    let solar_pos = calculate_solar_position(noon)?;
-    let dec_rad = solar_pos.dec.to_radians();
-    let lat_rad = location.latitude.to_radians();
-    let altitude_correction = -0.833_f64.to_radians();
-    
-    let cos_hour_angle = (altitude_correction.sin() - lat_rad.sin() * dec_rad.sin()) 
-                       / (lat_rad.cos() * dec_rad.cos());
-    
-    if cos_hour_angle.abs() > 1.0 {
-        return Ok(RiseSetTimes { rise: None, set: None });
-    }
-    
-    let hour_angle_deg = cos_hour_angle.acos().to_degrees();
-    let lst_midnight = local_sidereal_time(
-        greenwich_mean_sidereal_time(julian_date(midnight)), location.longitude);
-    let transit_time = (solar_pos.ra - lst_midnight).rem_euclid(24.0);
-    
-    let rise_time_hours = (transit_time - hour_angle_deg / 15.0).rem_euclid(24.0);
-    let set_time_hours = (transit_time + hour_angle_deg / 15.0).rem_euclid(24.0);
-    
-    Ok(RiseSetTimes {
-        rise: Some(midnight + chrono::Duration::seconds((rise_time_hours * 3600.0) as i64)),
-        set: Some(midnight + chrono::Duration::seconds((set_time_hours * 3600.0) as i64)),
-    })
+    // -0.833° = -34' refraction at the horizon + the Sun's ~16' semidiameter.
+    let solar_pos = calculate_solar_position(at_time(date, 12, 0, 0))?;
+    Ok(rise_set_from_position(solar_pos, location, date, -0.833))
 }
 
 fn calculate_lunar_rise_set(location: ObserverLocation, date: DateTime<Utc>) -> Result<RiseSetTimes> {
-    use crate::time::{julian_date, local_sidereal_time, greenwich_mean_sidereal_time};
-    use chrono::NaiveTime;
-    
-    let naive_date = date.naive_utc().date();
-    let midnight = DateTime::from_naive_utc_and_offset(
-        naive_date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap()), chrono::Utc);
-    let noon = DateTime::from_naive_utc_and_offset(
-        naive_date.and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap()), chrono::Utc);
-    
-    let lunar_pos = calculate_lunar_position(noon)?;
-    let dec_rad = lunar_pos.dec.to_radians();
-    let lat_rad = location.latitude.to_radians();
-    let altitude_correction = -0.583_f64.to_radians();
-    
-    let cos_hour_angle = (altitude_correction.sin() - lat_rad.sin() * dec_rad.sin()) 
-                       / (lat_rad.cos() * dec_rad.cos());
-    
-    if cos_hour_angle.abs() > 1.0 {
-        return Ok(RiseSetTimes { rise: None, set: None });
-    }
-    
-    let hour_angle_deg = cos_hour_angle.acos().to_degrees();
-    let lst_midnight = local_sidereal_time(
-        greenwich_mean_sidereal_time(julian_date(midnight)), location.longitude);
-    let transit_time = (lunar_pos.ra - lst_midnight).rem_euclid(24.0);
-    
-    let rise_time_hours = (transit_time - hour_angle_deg / 15.0).rem_euclid(24.0);
-    let set_time_hours = (transit_time + hour_angle_deg / 15.0).rem_euclid(24.0);
-    
-    Ok(RiseSetTimes {
-        rise: Some(midnight + chrono::Duration::seconds((rise_time_hours * 3600.0) as i64)),
-        set: Some(midnight + chrono::Duration::seconds((set_time_hours * 3600.0) as i64)),
-    })
+    // -0.583° accounts for refraction minus the Moon's mean parallax/semidiameter offset.
+    let lunar_pos = calculate_lunar_position(at_time(date, 12, 0, 0))?;
+    Ok(rise_set_from_position(lunar_pos, location, date, -0.583))
+}
+
+fn calculate_planet_rise_set(
+    planet: crate::planets::Planet,
+    location: ObserverLocation,
+    date: DateTime<Utc>,
+) -> Result<RiseSetTimes> {
+    use crate::time::julian_date;
+
+    // Planets are effectively point sources, so the only horizon correction is atmospheric
+    // refraction (~ -34', i.e. -0.5667°); there is no semidiameter term as for the Sun/Moon.
+    let noon = at_time(date, 12, 0, 0);
+    let planet_pos = crate::planets::calculate_planet_position(planet, julian_date(noon))?;
+    Ok(rise_set_from_position(planet_pos, location, date, -0.5667))
 }
 
 pub fn calculate_position(object: CelestialObject, date: DateTime<Utc>) -> Result<crate::coordinates::RaDec> {
@@ -314,5 +317,38 @@ mod tests {
         // The Moon's actual motion is complex due to perturbations
         assert!(ra_diff > 0.01, 
                 "Moon position should change over a month, RA1: {}, RA2: {}", pos1.ra, pos2.ra);
+    }
+
+    #[test]
+    fn test_planet_rise_set_returns_times() {
+        // Jupiter (Dec ~+8.6° on this date) rises and sets from a mid-northern latitude.
+        let date = NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
+        let datetime = DateTime::from_naive_utc_and_offset(
+            date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap()), Utc);
+        let location = ObserverLocation { latitude: 47.6, longitude: -122.3, elevation: 0.0 };
+
+        let rs = calculate_rise_set_times(
+            CelestialObject::Planet(crate::planets::Planet::Jupiter), location, datetime).unwrap();
+
+        assert!(rs.rise.is_some(), "Jupiter should rise at this latitude/date");
+        assert!(rs.set.is_some(), "Jupiter should set at this latitude/date");
+    }
+
+    #[test]
+    fn test_planet_rise_set_all_planets_no_error() {
+        // Every planet should produce a rise/set result (Some or None) without erroring.
+        let date = NaiveDate::from_ymd_opt(2024, 6, 21).unwrap();
+        let datetime = DateTime::from_naive_utc_and_offset(
+            date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap()), Utc);
+        let location = ObserverLocation { latitude: 40.0, longitude: -74.0, elevation: 0.0 };
+
+        for planet in [crate::planets::Planet::Mercury, crate::planets::Planet::Venus,
+                       crate::planets::Planet::Mars, crate::planets::Planet::Jupiter,
+                       crate::planets::Planet::Saturn, crate::planets::Planet::Uranus,
+                       crate::planets::Planet::Neptune] {
+            let result = calculate_rise_set_times(
+                CelestialObject::Planet(planet), location, datetime);
+            assert!(result.is_ok(), "{} rise/set should not error", planet.name());
+        }
     }
 }

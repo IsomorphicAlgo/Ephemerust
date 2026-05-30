@@ -82,11 +82,17 @@ cargo run -- rise-set --object sun --latitude 47.6061 --longitude=-122.3328 --da
 
 # Moonrise/moonset
 cargo run -- rise-set --object moon --latitude 47.6061 --longitude=-122.3328 --date "2024-06-21"
+
+# Planet rise/set (uses the VSOP87 position for the day)
+cargo run -- rise-set --object jupiter --latitude 47.6061 --longitude=-122.3328 --date "2000-01-01"
+# Rise: 20:23:21 UTC
+# Set:  09:46:29 UTC
 ```
 
-> Planet rise/set times are not yet implemented and will return an error. Planet *positions*
-> are available (see [vsop87.md](vsop87.md)); the rise/set algorithm just needs to accept
-> them, which is the planned approach.
+The same algorithm serves the Sun, Moon, and planets; only the horizon altitude correction
+differs (Sun −0.833° for refraction + semidiameter, Moon −0.583°, planets −0.5667° for
+refraction alone, since they are effectively point sources). When an object is circumpolar
+or never rises at the given latitude, both rise and set are reported as "Does not rise/set".
 
 ## CLI: positions
 

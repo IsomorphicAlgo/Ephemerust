@@ -27,13 +27,13 @@ The project is structured in two phases:
 | ECEF ↔ ECI | ✅ working |
 | Orbital mechanics (`orbital` command) | ✅ working (period, true anomaly, state vectors) |
 | Planet positions (VSOP87) | ✅ working (truncated VSOP87D, ~arcminute accuracy) |
-| Planet rise/set | 🚧 planned |
+| Planet rise/set | ✅ working |
 
 ## Install & build
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (73 unit + 5 doctests)
+cargo test             # run the test suite (75 unit + 5 doctests)
 cargo run -- --help    # list all commands
 ```
 
@@ -68,6 +68,8 @@ cargo run -- rise-set --object sun --latitude 47.6061 --longitude=-122.3328 --da
 # Rise: 15:56:45 UTC
 # Set:  00:22:44 UTC
 ```
+
+Works for `sun`, `moon`, and any planet (e.g. `--object jupiter`).
 
 ### `convert` — coordinate system conversions
 

@@ -21,7 +21,9 @@ See [vsop87.md](vsop87.md) for the per-planet VSOP87 accuracy breakdown.
 - **No atmospheric refraction** in Alt/Az conversions.
 - **Truncated VSOP87D** — each planet uses only the leading terms, giving a few arcminutes
   rather than the sub-arcsecond accuracy of the full series.
-- **Planet rise/set** not implemented (returns an error).
+- **Rise/set approximation** — rise/set uses the object's position at local noon (held fixed
+  over the day) and does not iterate; it is accurate to roughly a minute for the Sun and
+  planets, more for the fast-moving Moon.
 
 ## Future enhancements
 

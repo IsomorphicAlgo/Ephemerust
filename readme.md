@@ -173,6 +173,7 @@ The full mathematics, conventions, and engineering details live in [docs/](docs/
 - [Accuracy & limitations](docs/accuracy-and-limits.md)
 - [Architecture](docs/architecture.md) — modules, errors, logging, testing
 - [Roadmap](docs/roadmap.md) — Phase 2 (API service) and deployment plans
+- [Network TLE fetch plan](http_plan.md) — `--tle-url`, CelesTrak HTTPS usage expectations, and acceptance criteria
 
 ## Versioning
 
@@ -227,6 +228,34 @@ element data.
 
 - [Skyfield](https://rhodesmill.org/skyfield/) (Brandon Rhodes) — the Python library whose
 ergonomic, accessible design Ephemerust aims to bring to the Rust ecosystem.
+
+## External check: ISS vs [Astroviewer](https://www.astroviewer.net/iss/en/)
+
+A quick **library** trial (not the `track` CLI, which prints state at the TLE epoch only)
+compared Ephemerust to Astroviewer’s live readout for the same idea: current ISS subpoint,
+speed, and altitude.
+
+**Setup.** ISS two-line element set from CelesTrak
+(`https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=tle`, ISS ZARYA line
+pair), epoch **2026-05-31 11:38:14 UTC**. Astroviewer listed **19:11:23 UTC** without a
+calendar date; the run used **2026-05-31 19:11:23 UTC** so the instant lies on the same UTC
+day as that TLE. Re-fetch the TLE and adjust the datetime if you repeat the check later.
+
+**API.** `Tle::parse`, then `propagate` and `subpoint` at the chosen `chrono::DateTime<Utc>`
+(see [`examples/track_subpoint.rs`](examples/track_subpoint.rs) for a minimal pattern at
+epoch only).
+
+| Quantity | Astroviewer | Ephemerust |
+|----------|-------------|------------|
+| Orbital speed | 4.753 mi/s (17 111 mph) | **4.753 mi/s** (17 111 mph), ‖**v**‖ in TEME |
+| Altitude | 269 mi (~432.9 km) | **432.8 km** WGS84 ellipsoidal height (~269 mi) |
+| Longitude | 173.67° E | **173.68° E** |
+| Latitude | 32.55° S | **32.74° S** |
+
+Speed and altitude matched within rounding; longitude agreed within **~0.01°**. Latitude
+differed by **~0.2°** (~20 km along the ground track), which is still consistent with the
+documented subpoint error budget (TLE age, omitted precession/nutation, simplified TEME→ECEF
+bridge — see [Accuracy & limitations](docs/accuracy-and-limits.md)).
 
 ## License
 

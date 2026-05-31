@@ -2,7 +2,8 @@
 
 This folder is the "encyclopedia" for the project: the mathematics, conventions, and
 engineering behind each feature. The top-level [readme](../readme.md) is the quick-start
-and command reference; the pages here go deep.
+and command reference; the pages here go deep. The repository root [http_plan.md](../http_plan.md)
+documents the proposed `--tle-url` / CelesTrak usage and engineering acceptance criteria.
 
 ## Contents
 

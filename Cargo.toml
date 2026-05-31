@@ -12,6 +12,12 @@ readme = "readme.md"
 keywords = ["astronomy", "orbital-mechanics", "satellite", "ephemeris", "sgp4"]
 categories = ["command-line-utilities", "science"]
 
+[features]
+default = []
+# Reserved for HTTP TLE fetch and related deps. When enabled, the `track` subcommand exposes
+# `--tle-url` (still returns “not implemented” until fetch is wired).
+network = []
+
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
 log = "0.4"
@@ -25,4 +31,5 @@ sgp4 = "2.4.0"
 
 [dev-dependencies]
 criterion = "0.5"
+# Used by integration tests (`tests/cli_track.rs`) for JSON assertions.
 serde_json = "1.0"

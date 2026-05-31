@@ -69,7 +69,9 @@ The project is structured in two phases:
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (111 unit + 9 CLI integration + 20 doctests)
+cargo test             # run the test suite (111 unit + 8 CLI integration + 20 doctests by default)
+cargo test --features network   # also runs `--tle-url` CLI integration tests
+cargo build --examples # compile `examples/` (library-only demos)
 cargo run -- --help    # list all commands
 ```
 
@@ -148,7 +150,16 @@ cargo run -- track --tle-file iss.tle
 Optional: `--predict-passes-hours <n>` with `--pass-min-elevation-deg` (default 10) lists
 passes for the **n** hours after the element-set epoch from the default (or supplied) observer.
 
-`--mode` selects **tle**, **state**, **subpoint**, **look**, **passes** (needs `--predict-passes-hours` > 0), **ground** (needs `--ground-track-hours` > 0), or **all** (default). `--format json` prints one JSON object (TLE summary, observer, state, subpoint, look angles, optional passes and ground-track samples). `--tle-url` is accepted for future network fetch but currently returns a clear “not implemented” error. `--ground-track-json` still toggles CSV vs. JSON array for the ground-track section in **human** format.
+`--mode` selects **tle**, **state**, **subpoint**, **look**, **passes** (needs `--predict-passes-hours` > 0), **ground** (needs `--ground-track-hours` > 0), or **all** (default). `--format json` prints one JSON object (TLE summary, observer, state, subpoint, look angles, optional passes and ground-track samples). The `--tle-url` flag is only available when the binary is built with **`--features network`**; it still returns a clear “not implemented” error until HTTP fetch exists. `--ground-track-json` still toggles CSV vs. JSON array for the ground-track section in **human** format.
+
+## Examples (library)
+
+Runnable demos under [`examples/`](examples/) compile with `cargo build --examples` and do
+not require the CLI:
+
+```bash
+cargo run --example track_subpoint
+```
 
 ## Documentation
 
@@ -169,7 +180,11 @@ The full mathematics, conventions, and engineering details live in [docs/](docs/
 Ephemerust follows [Semantic Versioning](https://semver.org/) and is intentionally in the
 `0.x` range while its public API stabilizes. During `0.x`, the minor version marks breaking
 changes and the patch version marks compatible ones; a `1.0.0` release is reserved for a
-deliberately committed-stable API. The minimum supported Rust version (MSRV) is **1.88**.
+deliberately committed-stable API. The minimum supported Rust version (MSRV) is **1.88**
+(see `Cargo.toml` `rust-version`). Optional **`network`** feature: enables the `track`
+`--tle-url` flag (still a stub until HTTP TLE retrieval is implemented). The crate is **not**
+published to [crates.io](https://crates.io/) yet; consume it from this repository or a git
+dependency until a release is announced.
 
 ## Changelog
 

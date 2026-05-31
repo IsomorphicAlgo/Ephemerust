@@ -1,11 +1,37 @@
 //! CLI integration tests for the `track` command: human and JSON formats, modes, TLE sources,
 //! optional pass prediction and ground-track CSV, and teaching-oriented parse errors.
+//! By default eight tests run (`--tle-url` is absent without the `network` feature); with
+//! `cargo test --features network`, two additional tests cover the URL stub path.
 
 use std::process::Command;
 
 /// Path to the binary under test, provided by Cargo to integration tests.
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_ephemerust")
+}
+
+#[cfg(not(feature = "network"))]
+#[test]
+fn track_rejects_unknown_tle_url_flag_without_network_feature() {
+    let output = Command::new(binary())
+        .args([
+            "track",
+            "--tle-url",
+            "https://celestrak.org/NORAD/elements/stations.txt",
+        ])
+        .output()
+        .expect("the ephemerust binary should run");
+
+    assert!(
+        !output.status.success(),
+        "unexpected --tle-url should fail when built without `network`"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lower = stderr.to_lowercase();
+    assert!(
+        lower.contains("unexpected") && lower.contains("tle-url"),
+        "clap should reject unknown flag; stderr was:\n{stderr}"
+    );
 }
 
 #[test]
@@ -46,6 +72,7 @@ fn track_format_json_all_is_valid_json_with_expected_keys() {
     );
 }
 
+#[cfg(feature = "network")]
 #[test]
 fn track_tle_url_only_errors_with_placeholder_message() {
     let output = Command::new(binary())
@@ -65,6 +92,7 @@ fn track_tle_url_only_errors_with_placeholder_message() {
     );
 }
 
+#[cfg(feature = "network")]
 #[test]
 fn track_conflicting_tle_sources_error() {
     let tle = "ISS (ZARYA)\n\

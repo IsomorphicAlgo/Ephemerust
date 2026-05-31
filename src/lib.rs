@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
 //! # Ephemerust
 //!
 //! An accessible, **teaching-grade** astronomy, orbital-mechanics, and satellite-tracking
@@ -37,6 +38,21 @@
 //! and sidereal time are in hours; distances follow each module's stated unit (kilometres for
 //! orbital/satellite state, metres for ECEF/ECI). No precession or nutation is applied, which
 //! bounds accuracy at roughly the arcminute level — see `docs/accuracy-and-limits.md`.
+//!
+//! ## API stability, MSRV, and Cargo features
+//!
+//! The project is in the **`0.x`** semver range: minor releases may include breaking API
+//! changes (see [`CHANGELOG.md`](https://github.com/IsomorphicAlgo/ephemerust/blob/master/CHANGELOG.md)).
+//! The **minimum supported Rust version (MSRV)** is declared in the crate `Cargo.toml`
+//! (`package.rust-version`) and summarized in the top-level readme.
+//!
+//! Optional Cargo features:
+//!
+//! | Feature | Purpose |
+//! |---------|---------|
+//! | *(none by default)* | Default build: no HTTP client dependencies. |
+//! | `network` | Exposes the `track` CLI flag `--tle-url` for future CelesTrak/Space-Track-style
+//!   fetch; the handler is still a stub (“not implemented”) until wired in a later release. |
 //!
 //! ## Example
 //!

@@ -24,9 +24,9 @@
 //!
 //! # How we validate against production `sgp4`
 //!
-//! - [`semi_major_axis_km_from_mean_motion`] is checked against a **Keplerian period** derived
+//! - [`crate::sgp4_teaching::semi_major_axis_km_from_mean_motion`] is checked against a **Keplerian period** derived
 //!   from the same mean motion (exact consistency up to floating-point noise).
-//! - [`position_delta_norm_km_vs_sgp4`] measures ‖**r**₂-body − **r**_SGP4‖ for reference TLEs;
+//! - [`crate::sgp4_teaching::position_delta_norm_km_vs_sgp4`] measures ‖**r**₂-body − **r**_SGP4‖ for reference TLEs;
 //!   tolerances are **documented in tests**, not tuned to match mission software.
 //!
 //! See the narrative chapter **`docs/sgp4.md`** at the repository root (also published on

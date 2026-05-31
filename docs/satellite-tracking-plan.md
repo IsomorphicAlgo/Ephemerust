@@ -251,8 +251,9 @@ Expose the library through a coherent, well-formatted command interface.
 - **Output format** (`--format`): `human` (default) or `json` — a single pretty-printed JSON
   document for scripting (`tle`, `observer`, `state`, `subpoint`, `look_angles`, optional
   `passes` / `ground_track`, and pass/ground metadata fields when applicable).
-- TLE sources: `--tle-file`, `--tle`, and **`--tle-url`** (exclusive); URL fetch returns a clear
-  “not implemented yet” error (placeholder for a future `network` feature).
+- TLE sources: `--tle-file`, `--tle`, and (when built with **`--features network`**) **`--tle-url`**
+  (exclusive); URL fetch still returns a clear “not implemented yet” error until HTTP TLE
+  retrieval is implemented behind the same feature.
 - Human output remains section-oriented; `--ground-track-json` still selects CSV vs. raw JSON
   array for the ground-track block when `--format human`.
 
@@ -293,7 +294,8 @@ Deliver the educational artifact that distinguishes the project.
 ### Stage gate
 
 Teaching implementation tracks the production engine within tolerance; documentation is
-complete and accurate. **Await sign-off.**
+complete and accurate. **Signed off** (Milestone 8 approved; `docs/sgp4.md`, `sgp4_teaching`,
+and regression tests in-tree).
 
 ---
 
@@ -303,21 +305,27 @@ Prepare the crate for external consumption.
 
 ### Deliverables
 
-- Public API review and rustdoc coverage with runnable examples.
-- Feature flags (e.g. a `network` feature for TLE fetching) and a documented minimum
-  supported Rust version.
-- Updated `readme.md`, `CHANGELOG.md`, and architecture/test-count tables.
+- Public API review and rustdoc coverage with runnable examples (crate-level MSRV/feature
+  table; `#![deny(rustdoc::broken_intra_doc_links)]`; existing per-item examples retained).
+- Feature flags: **`network`** gates `--tle-url` on the `track` command (stub only until HTTP
+  fetch is implemented); MSRV documented in `Cargo.toml` and `readme.md`.
+- Updated `readme.md`, `CHANGELOG.md`, architecture/test-count tables, and this plan
+  (Milestone 8 signed off; publication to crates.io deferred while on `0.x`).
+- Example program: `examples/track_subpoint.rs` (`cargo build --examples`).
 
 ### Test plan
 
-- Doctests and example programs compile and pass.
+- Doctests and example programs compile and pass (`cargo test --doc`, `cargo build --examples`).
 - `cargo clippy` is clean; `cargo doc` builds without warnings.
-- The full suite (unit + integration + validation + doctests) passes.
+- The full suite (unit + integration + validation + doctests) passes; run
+  `cargo test --features network` occasionally to cover `--tle-url` integration tests.
 
 ### Stage gate
 
 API is documented and stable; tooling is clean; a publication decision is recorded.
-**Await sign-off.**
+**Await sign-off.** (Publication: **not** publishing to crates.io in this milestone; API
+remains `0.x` per [`CHANGELOG.md`](../CHANGELOG.md); MSRV and optional `network` CLI flag are
+documented in [`readme.md`](../readme.md).)
 
 ---
 

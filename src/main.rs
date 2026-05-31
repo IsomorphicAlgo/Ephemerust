@@ -82,8 +82,9 @@ enum Commands {
         /// Inline TLE text (quote the two/three lines; preserve line breaks)
         #[arg(short = 't', long)]
         tle: Option<String>,
-        /// Fetch TLE from this URL (not implemented yet — placeholder per Milestone 7)
-        #[arg(long)]
+        /// Fetch TLE from this URL (stub only: still “not implemented”; requires `--features network`)
+        #[cfg_attr(not(feature = "network"), arg(skip))]
+        #[cfg_attr(feature = "network", arg(long = "tle-url"))]
         tle_url: Option<String>,
         /// What to print: `all` (default), `tle` summary only, `state`, `subpoint`, `look`,
         /// `passes` (requires `--predict-passes-hours` > 0), or `ground` (requires `--ground-track-hours` > 0)
@@ -382,16 +383,22 @@ fn resolve_tle_input(
     tle_url: Option<String>,
 ) -> Result<ephemerust::satellite::Tle> {
     use ephemerust::satellite::Tle;
+
+    #[cfg(feature = "network")]
+    const TLE_ONE_OF: &str = "provide exactly one of --tle-file, --tle, or --tle-url";
+    #[cfg(not(feature = "network"))]
+    const TLE_ONE_OF: &str = "provide exactly one of --tle-file or --tle";
+    #[cfg(feature = "network")]
+    const TLE_ONLY_ONE: &str = "only one of --tle-file, --tle, or --tle-url may be given";
+    #[cfg(not(feature = "network"))]
+    const TLE_ONLY_ONE: &str = "only one of --tle-file or --tle may be given";
+
     let n = tle_file.is_some() as u8 + tle.is_some() as u8 + tle_url.is_some() as u8;
     if n == 0 {
-        return Err(ephemerust::AstroError::SatelliteError(
-            "provide exactly one of --tle-file, --tle, or --tle-url".into(),
-        ));
+        return Err(ephemerust::AstroError::SatelliteError(TLE_ONE_OF.into()));
     }
     if n > 1 {
-        return Err(ephemerust::AstroError::SatelliteError(
-            "only one of --tle-file, --tle, or --tle-url may be given".into(),
-        ));
+        return Err(ephemerust::AstroError::SatelliteError(TLE_ONLY_ONE.into()));
     }
     if tle_url.is_some() {
         return Err(ephemerust::AstroError::SatelliteError(

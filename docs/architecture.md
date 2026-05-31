@@ -8,6 +8,8 @@ ephemerust/
 ├── Cargo.lock
 ├── readme.md           # quick start + command reference
 ├── CHANGELOG.md        # version & change history
+├── examples/           # library-only demos (`cargo build --examples`)
+│   └── track_subpoint.rs
 ├── docs/               # this documentation set
 └── src/
     ├── main.rs         # CLI entry point and command parsing
@@ -17,6 +19,7 @@ ephemerust/
     ├── celestial.rs    # Sun/Moon positions, rise/set
     ├── orbital.rs      # Kepler's equation, period, state vectors
     ├── planets.rs      # VSOP87 planetary positions
+    ├── satellite.rs    # TLE/SGP4, TEME→ECEF→geodetic, look angles, passes, ground track
     └── sgp4_teaching.rs # educational two-body / Kepler scaffolding vs production `sgp4`
 ```
 
@@ -64,6 +67,15 @@ self-contained.
 | `serde_json` | JSON export (`ground_track_to_json`, `track --format json`) |
 | `sgp4` | TLE parsing and SGP4/SDP4 satellite propagation engine |
 | `criterion` (dev) | benchmarking |
+
+## Cargo features
+
+| Feature | Effect |
+|---------|--------|
+| *(default)* | No HTTP dependencies; `track` accepts `--tle-file` and `--tle` only. |
+| `network` | Adds the `track --tle-url` flag (handler still a “not implemented” stub). |
+
+The **MSRV** is set in `Cargo.toml` (`package.rust-version`) and repeated in `readme.md`.
 
 ## Error handling patterns
 
@@ -116,7 +128,9 @@ Multi-level logging via `log` + `env_logger`; `--verbose` raises the level to de
 
 ## Testing
 
-The suite has **111 unit tests + 9 CLI integration tests + 20 doctests** (all passing).
+The suite has **111 unit tests + 8 CLI integration tests + 20 doctests** by default (all
+passing). With `cargo test --features network`, two additional CLI tests exercise the
+`--tle-url` placeholder path (nine integration tests total).
 
 - **Unit tests** — per-function, with known reference values, edge cases (poles, equator,
   origin, large coordinates), input validation, round-trip accuracy, and benchmarks.
@@ -124,7 +138,8 @@ The suite has **111 unit tests + 9 CLI integration tests + 20 doctests** (all pa
   `tests/cli_track.rs`, which spawns the binary and asserts that malformed TLEs produce a
   legible educational error and a non-zero exit code, and that a valid TLE prints the
   sub-satellite and look-angle sections, optional pass prediction, ground-track CSV, JSON
-  `track` output, and errors for conflicting or unsupported TLE sources.
+  `track` output, and errors for conflicting or unsupported TLE sources. Run
+  `cargo test --features network` to include `--tle-url` tests.
 - **Validation tests** — comparison with authoritative sources (JPL Horizons, Meeus).
 - **Doctests** — keep documentation examples compiling and correct.
 

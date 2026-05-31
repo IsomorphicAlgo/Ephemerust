@@ -14,13 +14,18 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
 
 ### Added
 
+- **Library polish (Milestone 9)** — Cargo feature `network` gates the `track --tle-url` CLI
+  flag (stub handler unchanged); default integration tests assert clap rejects the flag when
+  disabled. `examples/track_subpoint.rs` demonstrates `Tle` + `subpoint` from the library.
+  Crate rustdoc adds MSRV/feature notes, `#![deny(rustdoc::broken_intra_doc_links)]`, and the
+  satellite-tracking plan records M8 signed off and a crates.io publication deferral for `0.x`.
 - **SGP4 teaching layer (Milestone 8)** — new `docs/sgp4.md` (near-Earth SGP4 narrative,
   references, Ephemerust layering) and [`sgp4_teaching`](src/sgp4_teaching.rs): WGS-72
   mean-motion → **a**, linear mean-anomaly advance, two-body state vs `sgp4` oracle checks.
   Not used by production propagation. See [docs/sgp4.md](docs/sgp4.md).
 - **Track CLI (Milestone 7)** — `track` supports `--mode` (`all`, `tle`, `state`, `subpoint`,
   `look`, `passes`, `ground`), `--format human|json` for a unified JSON document, exclusive
-  TLE inputs (`--tle-file`, `--tle`, `--tle-url` placeholder), and validation for pass/ground
+  TLE inputs (`--tle-file`, `--tle`, optional `--tle-url` with `--features network`), and validation for pass/ground
   modes. Library: `Serialize` on `TemeState`, `LookAngles`, and `Pass` for machine-readable
   output. See [docs/satellite-tracking-plan.md](docs/satellite-tracking-plan.md).
 - **Ground track (Milestone 6)** — `ground_track` samples `[window_start, window_end)` every

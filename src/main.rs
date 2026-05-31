@@ -73,7 +73,7 @@ enum Commands {
         #[arg(long, default_value_t = 398600.4418)]
         mu: f64,
     },
-    /// Satellite tracking from a TLE (under construction; see docs/satellite-tracking-plan.md)
+    /// Satellite tracking from a TLE (see docs/satellite-tracking-plan.md)
     Track {
         /// Path to a file containing a TLE (2- or 3-line element set)
         #[arg(short = 'f', long)]
@@ -81,12 +81,18 @@ enum Commands {
         /// Inline TLE text (lines separated by literal "\n" or by spaces is not supported; quote the two/three lines)
         #[arg(short = 't', long)]
         tle: Option<String>,
-        /// Observer latitude in degrees (positive north)
+        /// Observer latitude in degrees (default: Everett, WA — 47.9088° N)
         #[arg(short = 'a', long)]
         latitude: Option<f64>,
-        /// Observer longitude in degrees (positive east)
+        /// Observer longitude in degrees, positive east (default: −122.2503°)
         #[arg(short = 'o', long)]
         longitude: Option<f64>,
+        /// If > 0, list predicted passes for this many hours starting at the element-set epoch
+        #[arg(long, default_value_t = 0_u32)]
+        predict_passes_hours: u32,
+        /// Minimum elevation in degrees when `--predict-passes-hours` is used
+        #[arg(long, default_value_t = 10.0)]
+        pass_min_elevation_deg: f64,
     },
 }
 
@@ -215,8 +221,20 @@ fn run() -> Result<()> {
             println!("  Velocity [km/s]: vx={:.6} vy={:.6} vz={:.6}",
                 state.velocity[0], state.velocity[1], state.velocity[2]);
         },
-        Commands::Track { tle_file, tle, latitude: _, longitude: _ } => {
+        Commands::Track {
+            tle_file,
+            tle,
+            latitude,
+            longitude,
+            predict_passes_hours,
+            pass_min_elevation_deg,
+        } => {
+            use ephemerust::celestial::ObserverLocation;
             use ephemerust::satellite::Tle;
+            use chrono::Duration;
+
+            const DEFAULT_LAT_DEG: f64 = 47.9088;
+            const DEFAULT_LON_DEG: f64 = -122.2503;
 
             let parsed = match (tle_file, tle) {
                 (Some(path), _) => Tle::from_file(&path)?,
@@ -231,22 +249,75 @@ fn run() -> Result<()> {
             print_tle_summary(&parsed);
 
             let state = ephemerust::satellite::propagate(&parsed, parsed.epoch)?;
+            let sub = ephemerust::satellite::subpoint(&parsed, parsed.epoch)?;
+            let obs = ObserverLocation {
+                latitude: latitude.unwrap_or(DEFAULT_LAT_DEG),
+                longitude: longitude.unwrap_or(DEFAULT_LON_DEG),
+                elevation: 0.0,
+            };
+            let look = ephemerust::satellite::look_angles(&parsed, parsed.epoch, obs)?;
             println!();
             println!("State at epoch (TEME frame):");
             println!("  Position [km]:   x={:.3} y={:.3} z={:.3}",
                 state.position_km[0], state.position_km[1], state.position_km[2]);
             println!("  Velocity [km/s]: vx={:.6} vy={:.6} vz={:.6}",
                 state.velocity_km_s[0], state.velocity_km_s[1], state.velocity_km_s[2]);
+            println!();
+            println!("Sub-satellite point at epoch (WGS84 geodetic):");
+            println!("  Latitude:  {:+.6}°", sub.latitude_deg);
+            println!("  Longitude: {:+.6}°", sub.longitude_deg);
+            println!("  Altitude:  {:.3} km (ellipsoidal)", sub.altitude_km);
+            println!();
+            println!(
+                "Look angles at epoch (observer {:.4}° N, {:.4}° lon, WGS84 h = {:.0} m):",
+                obs.latitude, obs.longitude, obs.elevation
+            );
+            println!("  Azimuth:    {:7.3}° (clockwise from true north)", look.azimuth_deg);
+            println!("  Elevation:  {:7.3}°", look.elevation_deg);
+            println!("  Range:      {:10.3} km", look.range_km);
+            println!("  Range rate: {:+.6} km/s (negative → approaching)", look.range_rate_km_s);
+
+            if predict_passes_hours > 0 {
+                let win_end = parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
+                let passes = ephemerust::satellite::predict_passes(
+                    &parsed,
+                    obs,
+                    parsed.epoch,
+                    win_end,
+                    pass_min_elevation_deg,
+                )?;
+                println!();
+                println!(
+                    "Predicted passes ({} h from epoch, min elevation {:.1}°):",
+                    predict_passes_hours, pass_min_elevation_deg
+                );
+                if passes.is_empty() {
+                    println!("  (none)");
+                } else {
+                    for (i, p) in passes.iter().enumerate() {
+                        println!(
+                            "  Pass {}: AOS {}  max el {:5.1}° @ {}  LOS {}",
+                            i + 1,
+                            p.aos.format("%Y-%m-%d %H:%M:%S"),
+                            p.max_elevation_deg,
+                            p.culmination.format("%H:%M:%S"),
+                            p.los.format("%Y-%m-%d %H:%M:%S"),
+                        );
+                        println!(
+                            "           az @ AOS {:6.1}°   az @ LOS {:6.1}°",
+                            p.aos_azimuth_deg, p.los_azimuth_deg
+                        );
+                    }
+                }
+            }
         },
     }
     
     Ok(())
 }
 
-/// Prints a human-readable summary of a parsed TLE.
-///
-/// Interim Milestone 1 output: propagation, look angles, passes, and ground tracks are
-/// added in later milestones (see docs/satellite-tracking-plan.md).
+/// Prints a human-readable summary of a parsed TLE (used by `track` before state, subpoint,
+/// and look-angle output).
 fn print_tle_summary(tle: &ephemerust::satellite::Tle) {
     if let Some(name) = &tle.name {
         println!("Object:        {}", name);

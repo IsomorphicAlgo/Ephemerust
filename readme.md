@@ -59,15 +59,17 @@ The project is structured in two phases:
 | Orbital mechanics (`orbital` command)         | ✅ working (period, true anomaly, state vectors)                                    |
 | Planet positions (VSOP87)                     | ✅ working (truncated VSOP87D, ~arcminute accuracy)                                 |
 | Planet rise/set                               | ✅ working                                                                          |
-| Satellite TLE parsing & propagation           | ✅ working (TLE → TEME state via SGP4; see [plan](docs/satellite-tracking-plan.md)) |
-| Satellite ground track / look angles / passes | 🚧 in progress (next milestones)                                                   |
+| Satellite TLE → TEME → subpoint (WGS84)      | ✅ working (see [plan](docs/satellite-tracking-plan.md))                            |
+| Satellite look angles (TLE → observer)       | ✅ working (ENU / az–el–range–range-rate; see [plan](docs/satellite-tracking-plan.md)) |
+| Satellite pass prediction (`predict_passes`) | ✅ working (coarse scan + bisection; see [plan](docs/satellite-tracking-plan.md))        |
+| Satellite ground track / CSV export          | 🚧 in progress (Milestone 6)                                                         |
 
 
 ## Install & build
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (89 unit + 2 CLI integration + 19 doctests)
+cargo test             # run the test suite (101 unit + 4 CLI integration + 20 doctests)
 cargo run -- --help    # list all commands
 ```
 
@@ -132,7 +134,7 @@ cargo run -- orbital --semi-major 6778 --eccentricity 0.0001 --inclination 51.6
 Optional flags: `--raan`, `--arg-periapsis`, `--mean-anomaly` (degrees), and `--mu`
 (gravitational parameter in km³/s², default Earth).
 
-### `track` — satellite tracking from a TLE (in progress)
+### `track` — satellite tracking from a TLE
 
 ```bash
 # From an inline Two-Line Element set
@@ -143,10 +145,10 @@ cargo run -- track --tle "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -
 cargo run -- track --tle-file iss.tle
 ```
 
-Currently parses and validates the element set, prints a summary (catalog number, epoch, and
-orbital elements), and propagates to the element-set epoch to report the TEME-frame state
-vector. Ground tracks, observer look angles, and pass prediction are being added per the
-[satellite-tracking plan](docs/satellite-tracking-plan.md).
+Optional: `--predict-passes-hours <n>` with `--pass-min-elevation-deg` (default 10) lists
+passes for the **n** hours after the element-set epoch from the default (or supplied) observer.
+
+Ground-track sampling and richer CLI modes are planned for Milestones 6–7.
 
 ## Documentation
 
@@ -154,7 +156,7 @@ The full mathematics, conventions, and engineering details live in [docs/](docs/
 
 - [Time systems](docs/time-systems.md) — Julian Date, sidereal time
 - [Celestial positions](docs/celestial-positions.md) — Sun & Moon models, rise/set
-- [Coordinate systems](docs/coordinates.md) — RA/Dec ↔ Alt/Az, ECEF ↔ ECI, frame conventions
+- [Coordinate systems](docs/coordinates.md) — RA/Dec ↔ Alt/Az, ECEF ↔ ECI, WGS84 geodetic, ENU look angles
 - [Orbital mechanics](docs/orbital-mechanics.md) — Kepler's equation, period, state vectors
 - [VSOP87 planetary theory](docs/vsop87.md) — series, data structures, conversion pipeline
 - [Accuracy & limitations](docs/accuracy-and-limits.md)

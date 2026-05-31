@@ -14,6 +14,22 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
 
 ### Added
 
+- **Pass prediction (Milestone 5)** — `predict_passes` finds passes over `[window_start,
+  window_end)` with a coarse elevation ladder and bisection-refined AOS/LOS; culmination via
+  ternary search; [`Pass`] now includes azimuths at AOS/LOS. GEO-like element sets use a
+  simplified all-or-nothing visibility. `track` accepts `--predict-passes-hours` and
+  `--pass-min-elevation-deg`. See [docs/satellite-tracking-plan.md](docs/satellite-tracking-plan.md).
+- **Look angles (Milestone 4)** — `look_angles(tle, time, observer)` produces azimuth
+  (clockwise from true north), elevation, slant range, and range rate via an **ENU** (east–
+  north–up) rotation from the observer–satellite ECEF vector; satellite velocity uses the same
+  TEME→ECEF rotation as position plus **ω** × **r**, and the observer station includes **ω** ×
+  **r_obs**. `track` prints look angles at epoch with Everett, WA as the default observer
+  (`--latitude` / `--longitude` override). See [docs/satellite-tracking-plan.md](docs/satellite-tracking-plan.md).
+- **Frame conversions & subpoint (Milestone 3)** — `teme_to_ecef` rotates TEME position into
+  `Ecef` using the same GMST Z-rotation as ECI→ECEF; WGS84 `ecef_to_geodetic_wgs84` / `Geodetic`
+  and `ecef_to_geodetic` → `Subpoint`; `subpoint` chains propagate → TEME→ECEF→geodetic.
+  Bowring latitude with equator/pole/longitude tests; `track` prints the sub-satellite point at
+  epoch. See [docs/satellite-tracking-plan.md](docs/satellite-tracking-plan.md).
 - **Documentation alignment** — added thorough Rustdoc to every public item across `lib.rs`,
   `time.rs`, `coordinates.rs`, `celestial.rs`, `orbital.rs`, `planets.rs`, and `satellite.rs`,
   each with a runnable example and the physical reasoning behind it (why SGP4 output is in the

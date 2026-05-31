@@ -23,10 +23,13 @@
 //!
 //! The staged implementation plan lives in `docs/satellite-tracking-plan.md`. Implemented so
 //! far: [`Tle`] parses and validates 2- and 3-line element sets (with structured, educational
-//! [`TleError`]s), and [`propagate`] takes a parsed element set to a [`TemeState`] via the
-//! `sgp4` engine. Frame conversions, observer look angles, and pass prediction are the
-//! subsequent milestones; their types ([`Subpoint`], [`LookAngles`], [`Pass`]) are defined but
-//! not yet populated.
+//! [`TleError`]s); [`propagate`] takes a parsed element set to a [`TemeState`] via the `sgp4`
+//! engine; [`teme_to_ecef`] and [`ecef_to_geodetic`] bridge TEME to WGS84 geodetic coordinates
+//! using Greenwich sidereal time (same Z-rotation convention as ECI→ECEF in [`crate::coordinates`]);
+//! [`subpoint`] combines propagation with that chain for the sub-satellite point; and
+//! [`look_angles`] completes the topocentric East–North–Up (ENU) pipeline for azimuth, elevation,
+//! slant range, and range rate; [`predict_passes`] finds visible passes over a time window using
+//! a coarse elevation scan with bisection refinement. Ground tracks are the next milestone.
 //!
 //! # Example
 //!
@@ -44,8 +47,10 @@
 //! assert!((tle.inclination_deg - 51.6461).abs() < 1e-6);
 //! ```
 
+use crate::celestial::ObserverLocation;
+use crate::coordinates::{Ecef, Eci, eci_to_ecef, ecef_to_geodetic_wgs84, geodetic_wgs84_to_ecef};
 use crate::{AstroError, Result};
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use thiserror::Error;
 
 /// A structured, *educational* error describing why a Two-Line Element set could not be
@@ -229,7 +234,7 @@ impl TleError {
 /// A parsed and validated Two-Line Element set.
 ///
 /// The original element-set lines are retained (`name`, `line1`, `line2`) so the propagation
-/// engine can re-parse them directly in Milestone 2, while the typed fields provide an
+/// engine can re-parse them directly, while the typed fields provide an
 /// inspectable, documented view of the orbital elements.
 ///
 /// Angles are in degrees, the mean motion is in revolutions per day, and the epoch is UTC.
@@ -322,6 +327,10 @@ pub struct Pass {
     pub los: DateTime<Utc>,
     /// Maximum elevation reached during the pass, in degrees.
     pub max_elevation_deg: f64,
+    /// Azimuth at AOS (degrees, clockwise from true north).
+    pub aos_azimuth_deg: f64,
+    /// Azimuth at LOS (degrees, clockwise from true north).
+    pub los_azimuth_deg: f64,
 }
 
 impl Tle {
@@ -645,10 +654,440 @@ pub fn propagate(tle: &Tle, time: DateTime<Utc>) -> Result<TemeState> {
     })
 }
 
+/// Converts a TEME position to **ECEF** coordinates at the given UTC time.
+///
+/// The position part of [`TemeState`] is converted from kilometres to metres and rotated
+/// from TEME to ECEF using the same Z-axis Greenwich sidereal-time model as
+/// [`crate::coordinates::eci_to_ecef`], treating TEME like ECI for this step (the usual
+/// simplified SGP4 pipeline). To transform velocity to ECEF, apply the same rotation to
+/// `[vx, vy, vz]` expressed in metres per second.
+///
+/// # Errors
+///
+/// Delegates to [`crate::coordinates::eci_to_ecef`] (invalid coordinates or GMST).
+pub fn teme_to_ecef(state: &TemeState, time: DateTime<Utc>) -> Result<Ecef> {
+    let jd = crate::time::julian_date(time);
+    let gmst = crate::time::greenwich_mean_sidereal_time(jd);
+    let eci = Eci {
+        x: state.position_km[0] * 1000.0,
+        y: state.position_km[1] * 1000.0,
+        z: state.position_km[2] * 1000.0,
+    };
+    eci_to_ecef(eci, gmst)
+}
+
+/// Converts **WGS84** [`Ecef`] coordinates (metres) to a [`Subpoint`] with altitude in kilometres.
+///
+/// This is a thin wrapper around [`crate::coordinates::ecef_to_geodetic_wgs84`] so satellite
+/// callers work directly in [`Subpoint`] without juggling unit conversions.
+pub fn ecef_to_geodetic(ecef: Ecef) -> Result<Subpoint> {
+    let g = ecef_to_geodetic_wgs84(ecef)?;
+    Ok(Subpoint {
+        latitude_deg: g.latitude_deg,
+        longitude_deg: g.longitude_deg,
+        altitude_km: g.height_m / 1000.0,
+    })
+}
+
+/// Propagates the element set to `time` and returns the **sub-satellite point** (geodetic
+/// latitude, longitude, and height above the WGS84 ellipsoid).
+///
+/// This is equivalent to [`propagate`] followed by [`teme_to_ecef`] and [`ecef_to_geodetic`].
+pub fn subpoint(tle: &Tle, time: DateTime<Utc>) -> Result<Subpoint> {
+    let state = propagate(tle, time)?;
+    let ecef = teme_to_ecef(&state, time)?;
+    ecef_to_geodetic(ecef)
+}
+
+/// Earth rotation rate about ECEF +Z (rad/s), conventional sidereal value used with GMST.
+const OMEGA_EARTH_RAD_S: f64 = 7.2921150e-5;
+
+/// ω × **r** for ω aligned with +Z (ECEF), in metres per second when **r** is in metres.
+fn omega_cross_r_ecef(r: &Ecef) -> [f64; 3] {
+    let w = OMEGA_EARTH_RAD_S;
+    [-w * r.y, w * r.x, 0.0]
+}
+
+/// TEME velocity to ECEF velocity (m/s), including the transport term **ω** × **r** for the
+/// rotating Earth-fixed frame (Vallado-style bridge used with SGP4/TEME pipelines).
+fn teme_velocity_to_ecef_m_s(state: &TemeState, time: DateTime<Utc>, r_ecef: &Ecef) -> Result<[f64; 3]> {
+    let jd = crate::time::julian_date(time);
+    let gmst = crate::time::greenwich_mean_sidereal_time(jd);
+    let v_eci = Eci {
+        x: state.velocity_km_s[0] * 1000.0,
+        y: state.velocity_km_s[1] * 1000.0,
+        z: state.velocity_km_s[2] * 1000.0,
+    };
+    let v_rot = eci_to_ecef(v_eci, gmst)?;
+    let wxr = omega_cross_r_ecef(r_ecef);
+    Ok([v_rot.x + wxr[0], v_rot.y + wxr[1], v_rot.z + wxr[2]])
+}
+
+/// Rotates a geocentric ECEF difference vector into **ENU** (east, north, up) at the observer.
+///
+/// The rotation is the standard WGS84 local tangent plane: east along the parallel, north
+/// along the meridian, up along the ellipsoid outward normal. This is equivalent to the
+/// usual **NED**/**SEZ** family up to axis renaming (ENU up = zenith of SEZ).
+fn ecef_delta_to_enu(
+    latitude_deg: f64,
+    longitude_deg: f64,
+    dx: f64,
+    dy: f64,
+    dz: f64,
+) -> (f64, f64, f64) {
+    let φ = latitude_deg.to_radians();
+    let λ = longitude_deg.to_radians();
+    let sin_φ = φ.sin();
+    let cos_φ = φ.cos();
+    let sin_λ = λ.sin();
+    let cos_λ = λ.cos();
+    let east = -sin_λ * dx + cos_λ * dy;
+    let north = -sin_φ * cos_λ * dx - sin_φ * sin_λ * dy + cos_φ * dz;
+    let up = cos_φ * cos_λ * dx + cos_φ * sin_λ * dy + sin_φ * dz;
+    (east, north, up)
+}
+
+/// Topocentric look angles from a TLE, time, and observer location.
+///
+/// Pipeline: [`propagate`] → TEME→ECEF position and velocity (including **ω** × **r** for
+/// Earth rotation), minus the observer's ECEF position and **ω** × **r_obs** velocity, then
+/// a local **ENU** (east–north–up) rotation. Azimuth is measured **clockwise from true north**
+/// (0° = north, 90° = east), matching [`crate::coordinates::AltAz`] conventions. Elevation is
+/// above the local astronomical horizon (the plane perpendicular to ellipsoid up).
+///
+/// `observer.elevation` is taken as **metres above the WGS84 ellipsoid** for the satellite
+/// pipeline (the same numeric field is documented as sea level elsewhere in the crate; for
+/// slant range it is treated as ellipsoidal height here).
+///
+/// # Errors
+///
+/// Returns [`AstroError::CalculationError`] if the slant range is below ~10 m (degenerate
+/// pointing). Other failures are propagation or coordinate errors from the underlying calls.
+///
+/// # Example
+///
+/// ```
+/// use ephemerust::celestial::ObserverLocation;
+/// use ephemerust::satellite::{Tle, look_angles};
+///
+/// let tle = Tle::parse(
+///     "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992\n\
+///      2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008",
+/// )
+/// .unwrap();
+/// let obs = ObserverLocation {
+///     latitude: 47.9088,
+///     longitude: -122.2503,
+///     elevation: 0.0,
+/// };
+/// let la = look_angles(&tle, tle.epoch, obs).unwrap();
+/// assert!(la.range_km > 50.0 && la.range_km < 20_000.0);
+/// assert!((0.0..360.0).contains(&la.azimuth_deg));
+/// ```
+pub fn look_angles(tle: &Tle, time: DateTime<Utc>, observer: ObserverLocation) -> Result<LookAngles> {
+    let state = propagate(tle, time)?;
+    let r_sat = teme_to_ecef(&state, time)?;
+    let r_obs = geodetic_wgs84_to_ecef(observer.latitude, observer.longitude, observer.elevation)?;
+
+    let rho_x = r_sat.x - r_obs.x;
+    let rho_y = r_sat.y - r_obs.y;
+    let rho_z = r_sat.z - r_obs.z;
+
+    let v_sat = teme_velocity_to_ecef_m_s(&state, time, &r_sat)?;
+    let v_obs = omega_cross_r_ecef(&r_obs);
+    let rdx = v_sat[0] - v_obs[0];
+    let rdy = v_sat[1] - v_obs[1];
+    let rdz = v_sat[2] - v_obs[2];
+
+    let (e, n, u) = ecef_delta_to_enu(observer.latitude, observer.longitude, rho_x, rho_y, rho_z);
+    let range_m = (e * e + n * n + u * u).sqrt();
+    const MIN_RANGE_M: f64 = 10.0;
+    if !range_m.is_finite() || range_m < MIN_RANGE_M {
+        return Err(AstroError::CalculationError(format!(
+            "observer-to-satellite range ({range_m:.3} m) is too small for stable azimuth/elevation"
+        )));
+    }
+
+    let horizontal = (e * e + n * n).sqrt();
+    let elevation_deg = u.atan2(horizontal).to_degrees();
+    let mut azimuth_deg = e.atan2(n).to_degrees();
+    if azimuth_deg < 0.0 {
+        azimuth_deg += 360.0;
+    }
+
+    let range_rate_m_s = (rho_x * rdx + rho_y * rdy + rho_z * rdz) / range_m;
+
+    Ok(LookAngles {
+        azimuth_deg,
+        elevation_deg,
+        range_km: range_m / 1000.0,
+        range_rate_km_s: range_rate_m_s / 1000.0,
+    })
+}
+
+/// Seconds per solar day (used only to convert mean motion from rev/day to an orbital period).
+const SECONDS_PER_DAY: f64 = 86_400.0;
+
+/// Coarse sampling step for pass finding: a fraction of the orbital period, clamped.
+fn coarse_step_for_mean_motion(mean_motion_rev_per_day: f64) -> Duration {
+    if mean_motion_rev_per_day <= 0.0 || !mean_motion_rev_per_day.is_finite() {
+        return Duration::seconds(60);
+    }
+    let period_s = SECONDS_PER_DAY / mean_motion_rev_per_day;
+    let step_s = (period_s / 48.0).round().clamp(15.0, 600.0);
+    Duration::seconds(step_s as i64)
+}
+
+fn elevation_deg(tle: &Tle, t: DateTime<Utc>, observer: ObserverLocation) -> Result<f64> {
+    Ok(look_angles(tle, t, observer)?.elevation_deg)
+}
+
+/// Heuristic: near-geosynchronous element sets (≈1 rev/day, equatorial) use a simplified
+/// all-or-nothing visibility over the search window.
+fn is_geo_heuristic(tle: &Tle) -> bool {
+    tle.mean_motion > 0.98
+        && tle.mean_motion < 1.04
+        && tle.inclination_deg.abs() < 3.0
+        && tle.eccentricity < 0.02
+}
+
+fn predict_passes_geo(
+    tle: &Tle,
+    observer: ObserverLocation,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    min_elevation_deg: f64,
+) -> Result<Vec<Pass>> {
+    if window_end <= window_start {
+        return Ok(Vec::new());
+    }
+    let mid = window_start + (window_end - window_start) / 2;
+    let el_start = elevation_deg(tle, window_start, observer)?;
+    let el_mid = elevation_deg(tle, mid, observer)?;
+    let el_end = elevation_deg(tle, window_end - Duration::milliseconds(1), observer)?;
+    let above = el_start >= min_elevation_deg && el_mid >= min_elevation_deg && el_end >= min_elevation_deg;
+    if !above {
+        return Ok(Vec::new());
+    }
+    let la_a = look_angles(tle, window_start, observer)?;
+    let la_b = look_angles(tle, window_end - Duration::milliseconds(1), observer)?;
+    Ok(vec![Pass {
+        aos: window_start,
+        culmination: mid,
+        los: window_end,
+        max_elevation_deg: el_start.max(el_mid).max(el_end),
+        aos_azimuth_deg: la_a.azimuth_deg,
+        los_azimuth_deg: la_b.azimuth_deg,
+    }])
+}
+
+/// Refines a rising threshold crossing: `el(lo) < mask`, `el(hi) >= mask`.
+fn bisect_elevation_rising(
+    tle: &Tle,
+    observer: ObserverLocation,
+    mask: f64,
+    mut lo: DateTime<Utc>,
+    mut hi: DateTime<Utc>,
+) -> Result<DateTime<Utc>> {
+    for _ in 0..56 {
+        if hi.signed_duration_since(lo) <= Duration::milliseconds(1) {
+            break;
+        }
+        let mid = lo + (hi - lo) / 2;
+        let el = elevation_deg(tle, mid, observer)?;
+        if el >= mask {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    Ok(hi)
+}
+
+/// Refines a falling threshold crossing: `el(lo) >= mask`, `el(hi) < mask`.
+fn bisect_elevation_falling(
+    tle: &Tle,
+    observer: ObserverLocation,
+    mask: f64,
+    mut lo: DateTime<Utc>,
+    mut hi: DateTime<Utc>,
+) -> Result<DateTime<Utc>> {
+    for _ in 0..56 {
+        if hi.signed_duration_since(lo) <= Duration::milliseconds(1) {
+            break;
+        }
+        let mid = lo + (hi - lo) / 2;
+        let el = elevation_deg(tle, mid, observer)?;
+        if el < mask {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    Ok(hi)
+}
+
+/// Finds culmination time and maximum elevation between AOS and LOS (ternary search on time).
+fn culmination_time_and_max_el(
+    tle: &Tle,
+    observer: ObserverLocation,
+    aos: DateTime<Utc>,
+    los: DateTime<Utc>,
+) -> Result<(DateTime<Utc>, f64)> {
+    let mut lo = aos;
+    let mut hi = los;
+    if hi <= lo {
+        let el = elevation_deg(tle, lo, observer)?;
+        return Ok((lo, el));
+    }
+    for _ in 0..48 {
+        if hi.signed_duration_since(lo) <= Duration::milliseconds(2) {
+            break;
+        }
+        let third = (hi - lo) / 3;
+        let m1 = lo + third;
+        let m2 = hi - third;
+        let e1 = elevation_deg(tle, m1, observer)?;
+        let e2 = elevation_deg(tle, m2, observer)?;
+        if e1 > e2 {
+            hi = m2;
+        } else {
+            lo = m1;
+        }
+    }
+    let t_peak = lo + (hi - lo) / 2;
+    let max_el = elevation_deg(tle, t_peak, observer)?;
+    Ok((t_peak, max_el))
+}
+
+/// Predicts visible passes of a satellite over an observer in a UTC time window.
+///
+/// The search samples elevation at a coarse step derived from the element set’s mean motion,
+/// detects crossings of `min_elevation_deg`, then refines AOS and LOS with bisection and
+/// locates culmination by ternary search on the elevation profile. Near-geosynchronous
+/// sets (≈1 rev/day, low inclination) use a simplified model: if the satellite is above the
+/// mask at the start, middle, and end of the window, a single pass spanning the full window
+/// is returned; otherwise none.
+///
+/// `window_end` is **exclusive** (samples use `t < window_end`).
+///
+/// `observer.elevation` is interpreted like [`look_angles`]: metres above the WGS84 ellipsoid.
+pub fn predict_passes(
+    tle: &Tle,
+    observer: ObserverLocation,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    min_elevation_deg: f64,
+) -> Result<Vec<Pass>> {
+    if window_end <= window_start {
+        return Ok(Vec::new());
+    }
+    if is_geo_heuristic(tle) {
+        return predict_passes_geo(tle, observer, window_start, window_end, min_elevation_deg);
+    }
+
+    let dt = coarse_step_for_mean_motion(tle.mean_motion);
+    let mut passes = Vec::new();
+
+    let mut prev_t = window_start;
+    let mut prev_el = elevation_deg(tle, prev_t, observer)?;
+    let mut pending_aos: Option<DateTime<Utc>> = if prev_el >= min_elevation_deg {
+        Some(window_start)
+    } else {
+        None
+    };
+
+    let mut t = window_start + dt;
+    while t < window_end {
+        let el = elevation_deg(tle, t, observer)?;
+
+        if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
+            let aos = bisect_elevation_rising(tle, observer, min_elevation_deg, prev_t, t)?;
+            pending_aos = Some(aos);
+        } else if pending_aos.is_some() && prev_el >= min_elevation_deg && el < min_elevation_deg {
+            let aos = pending_aos.take().expect("aos");
+            let los = bisect_elevation_falling(tle, observer, min_elevation_deg, prev_t, t)?;
+            if los > aos {
+                let (culm, max_el) = culmination_time_and_max_el(tle, observer, aos, los)?;
+                let la_aos = look_angles(tle, aos, observer)?;
+                let la_los = look_angles(tle, los, observer)?;
+                passes.push(Pass {
+                    aos,
+                    culmination: culm,
+                    los,
+                    max_elevation_deg: max_el,
+                    aos_azimuth_deg: la_aos.azimuth_deg,
+                    los_azimuth_deg: la_los.azimuth_deg,
+                });
+            }
+        }
+
+        prev_t = t;
+        prev_el = el;
+        t += dt;
+    }
+
+    // Final segment up to exclusive window end.
+    let last_t = (window_end - Duration::milliseconds(1)).max(window_start);
+    if last_t > prev_t {
+        let el = elevation_deg(tle, last_t, observer)?;
+        let opened_in_tail = if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
+            pending_aos = Some(bisect_elevation_rising(
+                tle,
+                observer,
+                min_elevation_deg,
+                prev_t,
+                last_t,
+            )?);
+            true
+        } else {
+            false
+        };
+
+        if let Some(aos) = pending_aos {
+            if !opened_in_tail && prev_el >= min_elevation_deg && el < min_elevation_deg {
+                let los = bisect_elevation_falling(tle, observer, min_elevation_deg, prev_t, last_t)?;
+                if los > aos {
+                    let (culm, max_el) = culmination_time_and_max_el(tle, observer, aos, los)?;
+                    let la_aos = look_angles(tle, aos, observer)?;
+                    let la_los = look_angles(tle, los, observer)?;
+                    passes.push(Pass {
+                        aos,
+                        culmination: culm,
+                        los,
+                        max_elevation_deg: max_el,
+                        aos_azimuth_deg: la_aos.azimuth_deg,
+                        los_azimuth_deg: la_los.azimuth_deg,
+                    });
+                }
+            } else if el >= min_elevation_deg {
+                let los = window_end;
+                let los_sample = last_t;
+                let (culm, max_el) =
+                    culmination_time_and_max_el(tle, observer, aos, los_sample)?;
+                let la_aos = look_angles(tle, aos, observer)?;
+                let la_los = look_angles(tle, los_sample, observer)?;
+                passes.push(Pass {
+                    aos,
+                    culmination: culm,
+                    los,
+                    max_elevation_deg: max_el,
+                    aos_azimuth_deg: la_aos.azimuth_deg,
+                    los_azimuth_deg: la_los.azimuth_deg,
+                });
+            }
+        }
+    }
+
+    Ok(passes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Datelike, Timelike};
+    use crate::celestial::ObserverLocation;
+    use chrono::{Datelike, Duration, TimeZone, Timelike};
+    use crate::coordinates::ecef_to_eci;
 
     // Canonical ISS (ZARYA) element set, reused as a fixed reference across the suite.
     const ISS_NAME: &str = "ISS (ZARYA)";
@@ -905,6 +1344,182 @@ mod tests {
         let far_future = tle.epoch + chrono::Duration::days(365 * 400);
         let err = propagate(&tle, far_future).expect_err("an unrepresentable time must error");
         assert!(matches!(err, AstroError::SatelliteError(_)), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn teme_to_ecef_inverts_ecef_to_eci_bridge() {
+        let time = Utc.with_ymd_and_hms(2000, 1, 1, 12, 0, 0).unwrap();
+        let jd = crate::time::julian_date(time);
+        let gmst = crate::time::greenwich_mean_sidereal_time(jd);
+
+        let ecef = crate::coordinates::Ecef {
+            x: 1_200_000.0,
+            y: -4_500_000.0,
+            z: 4_800_000.0,
+        };
+        let eci = ecef_to_eci(ecef, gmst).unwrap();
+        let state = TemeState {
+            position_km: [eci.x / 1000.0, eci.y / 1000.0, eci.z / 1000.0],
+            velocity_km_s: [0.0; 3],
+        };
+        let back = teme_to_ecef(&state, time).unwrap();
+        const MM: f64 = 0.001;
+        assert!((back.x - ecef.x).abs() < MM);
+        assert!((back.y - ecef.y).abs() < MM);
+        assert!((back.z - ecef.z).abs() < MM);
+    }
+
+    #[test]
+    fn subpoint_iss_epoch_is_plausible_leo() {
+        let tle = Tle::parse(&iss_3line()).expect("ISS TLE parses");
+        let p = subpoint(&tle, tle.epoch).expect("subpoint at epoch succeeds");
+        assert!(p.altitude_km > 200.0 && p.altitude_km < 500.0, "altitude {} km", p.altitude_km);
+        assert!(p.latitude_deg.abs() < 55.0, "latitude {}°", p.latitude_deg);
+        assert!(p.longitude_deg.abs() <= 180.0);
+    }
+
+    #[test]
+    fn ecef_to_geodetic_matches_wgs84_engine() {
+        let ecef = crate::coordinates::Ecef {
+            x: 652_954.0,
+            y: 4_774_619.0,
+            z: 4_202_104.0,
+        };
+        let g = crate::coordinates::ecef_to_geodetic_wgs84(ecef).unwrap();
+        let sp = ecef_to_geodetic(ecef).unwrap();
+        assert!((sp.latitude_deg - g.latitude_deg).abs() < 1e-12);
+        assert!((sp.longitude_deg - g.longitude_deg).abs() < 1e-12);
+        assert!((sp.altitude_km * 1000.0 - g.height_m).abs() < 1e-9);
+    }
+
+    #[test]
+    fn look_angles_near_zenith_when_observer_at_subpoint() {
+        let tle = Tle::parse(&iss_3line()).expect("ISS TLE parses");
+        let t = tle.epoch;
+        let sub = subpoint(&tle, t).expect("subpoint");
+        let obs = ObserverLocation {
+            latitude: sub.latitude_deg,
+            longitude: sub.longitude_deg,
+            elevation: 0.0,
+        };
+        let la = look_angles(&tle, t, obs).expect("look angles at subpoint");
+        assert!(
+            la.elevation_deg > 85.0,
+            "expected near-zenith; got el={}° az={}° range={} km",
+            la.elevation_deg,
+            la.azimuth_deg,
+            la.range_km
+        );
+    }
+
+    #[test]
+    fn look_angles_range_rate_matches_central_difference() {
+        let tle = Tle::parse(&iss_3line()).expect("ISS TLE parses");
+        let obs = ObserverLocation {
+            latitude: 47.9088,
+            longitude: -122.2503,
+            elevation: 0.0,
+        };
+        let t0 = tle.epoch;
+        let la0 = look_angles(&tle, t0, obs).expect("look angles at epoch");
+        let dt_s = 1.0_f64;
+        let dt = chrono::Duration::milliseconds((dt_s * 1000.0) as i64);
+        let r_plus = look_angles(&tle, t0 + dt, obs).expect("look+").range_km;
+        let r_minus = look_angles(&tle, t0 - dt, obs).expect("look-").range_km;
+        let num_km_s = (r_plus - r_minus) / (2.0 * dt_s);
+        assert!(
+            (num_km_s - la0.range_rate_km_s).abs() < 0.25,
+            "range_rate {} vs numerical {} km/s (1 s central difference)",
+            la0.range_rate_km_s,
+            num_km_s
+        );
+    }
+
+    #[test]
+    fn look_angles_approaching_has_negative_range_rate() {
+        let tle = Tle::parse(&iss_3line()).expect("ISS TLE parses");
+        let obs = ObserverLocation {
+            latitude: 47.9088,
+            longitude: -122.2503,
+            elevation: 0.0,
+        };
+        let t0 = tle.epoch;
+        let mut found = false;
+        for i in 1..3600 {
+            let t1 = t0 + chrono::Duration::seconds(i);
+            let t2 = t0 + chrono::Duration::seconds(i + 1);
+            let r1 = look_angles(&tle, t1, obs).unwrap().range_km;
+            let r2 = look_angles(&tle, t2, obs).unwrap().range_km;
+            if r2 < r1 - 0.002 {
+                let la = look_angles(&tle, t1, obs).unwrap();
+                assert!(
+                    la.range_rate_km_s < 0.0,
+                    "when range drops over 1 s, range_rate should be negative; got {} (r1={} r2={})",
+                    la.range_rate_km_s,
+                    r1,
+                    r2
+                );
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "no approaching 1 s window found within 1 h of epoch");
+    }
+
+    #[test]
+    fn predict_passes_is_deterministic() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let obs = ObserverLocation {
+            latitude: 47.9088,
+            longitude: -122.2503,
+            elevation: 0.0,
+        };
+        let start = tle.epoch;
+        let end = start + Duration::hours(72);
+        let a = predict_passes(&tle, obs, start, end, 10.0).unwrap();
+        let b = predict_passes(&tle, obs, start, end, 10.0).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn predict_passes_iss_finds_visible_pass_over_everett() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let obs = ObserverLocation {
+            latitude: 47.9088,
+            longitude: -122.2503,
+            elevation: 0.0,
+        };
+        let start = tle.epoch;
+        let end = start + Duration::hours(72);
+        let passes = predict_passes(&tle, obs, start, end, 10.0).expect("predict");
+        assert!(
+            !passes.is_empty(),
+            "expected at least one pass over 72 h for ISS / Everett"
+        );
+        let p = passes.iter().max_by(|x, y| {
+            x.max_elevation_deg
+                .partial_cmp(&y.max_elevation_deg)
+                .unwrap()
+        }).unwrap();
+        assert!(p.max_elevation_deg > 12.0, "max el {}", p.max_elevation_deg);
+        assert!(p.aos <= p.culmination && p.culmination <= p.los);
+        assert!(p.aos >= start && p.los <= end);
+        assert!((0.0..360.0).contains(&p.aos_azimuth_deg));
+        assert!((0.0..360.0).contains(&p.los_azimuth_deg));
+    }
+
+    #[test]
+    fn predict_passes_empty_for_extreme_mask() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let obs = ObserverLocation {
+            latitude: -89.5,
+            longitude: 0.0,
+            elevation: 0.0,
+        };
+        let start = tle.epoch;
+        let end = start + Duration::hours(6);
+        let passes = predict_passes(&tle, obs, start, end, 89.0).unwrap();
+        assert!(passes.is_empty(), "ISS should not reach 89° from deep south pole in 6 h");
     }
 
     #[test]

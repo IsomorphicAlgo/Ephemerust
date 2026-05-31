@@ -13,11 +13,11 @@ ephemerust/
     ├── main.rs         # CLI entry point and command parsing
     ├── lib.rs          # library root, re-exports, error types
     ├── time.rs         # Julian Date, sidereal time
-    ├── coordinates.rs  # RA/Dec ↔ Alt/Az, ECEF ↔ ECI
+    ├── coordinates.rs  # RA/Dec ↔ Alt/Az, ECEF ↔ ECI, WGS84 geodetic
     ├── celestial.rs    # Sun/Moon positions, rise/set
     ├── orbital.rs      # Kepler's equation, period, state vectors
     ├── planets.rs      # VSOP87 planetary positions
-    └── satellite.rs    # TLE/SGP4 satellite tracking (in progress)
+    └── satellite.rs    # TLE/SGP4, TEME→ECEF→geodetic, look angles, pass prediction
 ```
 
 ## Modules
@@ -26,11 +26,11 @@ ephemerust/
 |--------|----------------|
 | `lib.rs` | Root; public API re-exports; `AstroError` / `Result` |
 | `time.rs` | Julian Date, GMST, LST |
-| `coordinates.rs` | Equatorial/horizontal and Earth-centered transforms |
+| `coordinates.rs` | Equatorial/horizontal, ECEF↔ECI, WGS84 ECEF↔geodetic |
 | `celestial.rs` | Sun/Moon position and rise/set; dispatches planet calls |
 | `orbital.rs` | Orbital mechanics |
 | `planets.rs` | VSOP87 ephemeris (complex and self-contained) |
-| `satellite.rs` | TLE/SGP4 satellite tracking layer over the `sgp4` crate (in progress) |
+| `satellite.rs` | TLE/SGP4, TEME→ECEF→geodetic, look angles, pass prediction (ground track next) |
 
 **Separation rationale**: `celestial.rs` handles the simpler Sun/Moon models and routes
 planet requests to `planets.rs`, which is kept separate because VSOP87 is large and
@@ -40,10 +40,12 @@ self-contained.
 
 `lib.rs` re-exports the commonly used items:
 
-- Coordinate types: `RaDec`, `AltAz`, `Ecef`, `Eci`
+- Coordinate types: `RaDec`, `AltAz`, `Ecef`, `Eci`, `Geodetic`; WGS84 `geodetic_wgs84_to_ecef`,
+  `ecef_to_geodetic_wgs84`
 - Celestial types: `CelestialObject`, `ObserverLocation`, `RiseSetTimes`
 - Planet types: `Planet`, `calculate_planet_position`
-- Satellite types: `Tle`, `TleError`, `TemeState`, `Subpoint`, `LookAngles`, `Pass`
+- Satellite types: `Tle`, `TleError`, `TemeState`, `Subpoint`, `LookAngles`, `Pass`; functions
+  `propagate`, `teme_to_ecef`, `ecef_to_geodetic`, `subpoint`, `look_angles`, `predict_passes`
 - Time functions: `julian_date`, `greenwich_mean_sidereal_time`, `local_sidereal_time`
 - Errors: `AstroError`, `Result<T>`
 
@@ -110,13 +112,14 @@ Multi-level logging via `log` + `env_logger`; `--verbose` raises the level to de
 
 ## Testing
 
-The suite has **89 unit tests + 2 CLI integration tests + 19 doctests** (all passing).
+The suite has **101 unit tests + 4 CLI integration tests + 20 doctests** (all passing).
 
 - **Unit tests** — per-function, with known reference values, edge cases (poles, equator,
   origin, large coordinates), input validation, round-trip accuracy, and benchmarks.
 - **Integration tests** — end-to-end CLI workflows and cross-module pipelines, including
   `tests/cli_track.rs`, which spawns the binary and asserts that malformed TLEs produce a
-  legible educational error and a non-zero exit code.
+  legible educational error and a non-zero exit code, and that a valid TLE prints the
+  sub-satellite and look-angle sections.
 - **Validation tests** — comparison with authoritative sources (JPL Horizons, Meeus).
 - **Doctests** — keep documentation examples compiling and correct.
 

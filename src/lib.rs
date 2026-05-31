@@ -24,11 +24,11 @@
 //! | Module | Responsibility |
 //! |--------|----------------|
 //! | [`time`] | Julian Date, Greenwich/Local sidereal time |
-//! | [`coordinates`] | RA/Dec ↔ Alt/Az and ECEF ↔ ECI transforms |
+//! | [`coordinates`] | RA/Dec ↔ Alt/Az, ECEF ↔ ECI, and WGS84 ECEF ↔ geodetic |
 //! | [`celestial`] | Sun/Moon position and rise/set; dispatch to planets |
 //! | [`orbital`] | Kepler's equation, orbital period, elements → state vectors |
 //! | [`planets`] | VSOP87 planetary ephemeris |
-//! | [`satellite`] | TLE ingestion and SGP4 propagation (TEME state) |
+//! | [`satellite`] | TLE / SGP4 propagation, TEME → ECEF → geodetic, sub-satellite point |
 //!
 //! ## Conventions
 //!
@@ -121,17 +121,22 @@ pub mod error {
 // Re-export commonly used types and functions for convenience
 pub use error::{AstroError, Result};
 
-// Re-export coordinate types
-pub use coordinates::{RaDec, AltAz, Ecef, Eci};
+// Re-export coordinate types and WGS84 geodetic helpers
+pub use coordinates::{
+    ecef_to_geodetic_wgs84, geodetic_wgs84_to_ecef, AltAz, Ecef, Eci, Geodetic, RaDec,
+};
 
 // Re-export celestial object types
 pub use celestial::{CelestialObject, ObserverLocation, RiseSetTimes};
 
 // Re-export planet types
-pub use planets::{Planet, calculate_planet_position};
+pub use planets::{calculate_planet_position, Planet};
 
-// Re-export satellite types
-pub use satellite::{Tle, TleError, TemeState, Subpoint, LookAngles, Pass};
+// Re-export satellite types and propagation / ground-point pipeline
+pub use satellite::{
+    ecef_to_geodetic, look_angles, predict_passes, propagate, subpoint, teme_to_ecef, LookAngles,
+    Pass, Subpoint, TemeState, Tle, TleError,
+};
 
 // Re-export time functions
 pub use time::{julian_date, greenwich_mean_sidereal_time, local_sidereal_time};

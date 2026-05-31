@@ -8,6 +8,9 @@
 | Lunar position | ~10 arcminutes (limited perturbation terms) |
 | RA/Dec ↔ Alt/Az | sub-arcsecond (floating-point limited) |
 | ECEF ↔ ECI round-trip | ~1 mm at Earth scale |
+| ECEF ↔ WGS84 geodetic round-trip | ~1 mm at Earth scale |
+| Satellite look angles (azimuth / elevation) | on the order of a few degrees vs. external tools | TLE age, omitted precession/nutation, simplified TEME→ECEF bridge |
+| Satellite pass prediction (`predict_passes`) | AOS/LOS times typically within ~1 minute of external tools; max elevation within a few degrees | Coarse scan step, bisection/ternary refinement, same frame/TLE limitations as look angles; GEO-like orbits use a simplified visibility model |
 | Planet positions (truncated VSOP87D) | a few arcminutes (vs. JPL Horizons at J2000.0) |
 
 See [vsop87.md](vsop87.md) for the per-planet VSOP87 accuracy breakdown.
@@ -21,9 +24,9 @@ See [vsop87.md](vsop87.md) for the per-planet VSOP87 accuracy breakdown.
 - **No atmospheric refraction** in Alt/Az conversions.
 - **Truncated VSOP87D** — each planet uses only the leading terms, giving a few arcminutes
   rather than the sub-arcsecond accuracy of the full series.
-- **Rise/set approximation** — rise/set uses the object's position at local noon (held fixed
-  over the day) and does not iterate; it is accurate to roughly a minute for the Sun and
-  planets, more for the fast-moving Moon.
+- **Satellite `look_angles`** — for the satellite pipeline, `ObserverLocation::elevation` is
+  interpreted as **metres above the WGS84 ellipsoid** (not orthometric height above the geoid),
+  while other commands still treat it as informational where noted.
 
 ## Future enhancements
 

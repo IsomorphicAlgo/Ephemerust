@@ -160,7 +160,7 @@ Turn inertial states into Earth-fixed positions and sub-satellite ground points.
 ### Stage gate
 
 Round-trip accuracy holds; sub-satellite point matches the external reference within budget.
-**Await sign-off.**
+**Signed off** (Milestone 3 approved; geodetic round-trip and plausibility tests in-tree).
 
 ---
 
@@ -185,8 +185,7 @@ Compute observer-relative geometry, the core of pointing and visibility.
 
 ### Stage gate
 
-Look angles match the external reference within tolerance; sign conventions verified.
-**Await sign-off.**
+**Signed off** (Milestone 4 approved; ENU look angles, range-rate checks, and CLI output in-tree).
 
 ---
 

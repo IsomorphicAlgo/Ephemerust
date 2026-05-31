@@ -1,14 +1,52 @@
-//! CLI integration tests for the `track` command's error presentation.
-//!
-//! These spawn the compiled binary (via the Cargo-provided `CARGO_BIN_EXE_ephemerust` path)
-//! and assert that malformed input produces a legible, teaching-oriented error on stderr and
-//! a non-zero exit code — the behavior introduced by the educational error-handling pass.
+//! CLI integration tests for the `track` command: successful output includes sub-satellite,
+//! look angles, and optional pass prediction; malformed input yields teaching-oriented errors.
 
 use std::process::Command;
 
 /// Path to the binary under test, provided by Cargo to integration tests.
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_ephemerust")
+}
+
+#[test]
+fn valid_tle_with_predict_passes_prints_pass_section() {
+    let tle = "ISS (ZARYA)\n\
+         1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992\n\
+         2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008";
+    let output = Command::new(binary())
+        .args(["track", "--tle", tle, "--predict-passes-hours", "48"])
+        .output()
+        .expect("the ephemerust binary should run");
+
+    assert!(output.status.success(), "valid TLE should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Predicted passes"),
+        "expected pass prediction section; stdout was:\n{stdout}"
+    );
+}
+
+#[test]
+fn valid_tle_prints_sub_satellite_section() {
+    let tle = "ISS (ZARYA)\n\
+         1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992\n\
+         2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008";
+    let output = Command::new(binary())
+        .args(["track", "--tle", tle])
+        .output()
+        .expect("the ephemerust binary should run");
+
+    assert!(output.status.success(), "valid TLE should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Sub-satellite point"),
+        "expected sub-satellite section; stdout was:\n{stdout}"
+    );
+    assert!(stdout.contains("Latitude:"), "stdout was:\n{stdout}");
+    assert!(
+        stdout.contains("Look angles"),
+        "expected look angles section; stdout was:\n{stdout}"
+    );
 }
 
 #[test]

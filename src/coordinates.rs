@@ -8,6 +8,9 @@
 //!   observer's latitude and local sidereal time.
 //! - **Earth-fixed ([`Ecef`]) ↔ inertial ([`Eci`])** — a frame that rotates with the Earth
 //!   versus one fixed against the stars. The link is the Earth's rotation angle (GMST).
+//! - **Earth-fixed ([`Ecef`]) ↔ geodetic ([`Geodetic`])** — latitude, longitude, and
+//!   ellipsoidal height on the **WGS84** ellipsoid ([`geodetic_wgs84_to_ecef`],
+//!   [`ecef_to_geodetic_wgs84`]).
 //!
 //! No precession or nutation corrections are applied, so accuracy is at the arcminute level —
 //! see `docs/accuracy-and-limits.md`.
@@ -57,6 +60,121 @@ pub struct Ecef {
     pub y: f64,
     /// Z coordinate (toward the North Pole), in metres.
     pub z: f64,
+}
+
+/// Geodetic coordinates on the **WGS84** reference ellipsoid.
+///
+/// Latitude and longitude are in **degrees** (east longitude positive); height is the
+/// perpendicular distance above the ellipsoid in **metres** (not orthometric height above
+/// the geoid).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Geodetic {
+    /// Geodetic latitude in degrees `[-90, +90]`, positive north.
+    pub latitude_deg: f64,
+    /// Geodetic longitude in degrees `(-180, +180]`, positive east.
+    pub longitude_deg: f64,
+    /// Ellipsoidal height above the WGS84 ellipsoid in metres.
+    pub height_m: f64,
+}
+
+/// WGS84 semi-major axis (equatorial radius) in metres.
+pub const WGS84_A: f64 = 6378137.0;
+/// WGS84 inverse flattening `1/f`.
+pub const WGS84_INV_F: f64 = 298.257223563;
+
+/// Converts geodetic latitude, longitude, and ellipsoidal height to **WGS84** [`Ecef`].
+///
+/// # Arguments
+///
+/// * `lat_deg`, `lon_deg` — geodetic latitude and longitude in degrees.
+/// * `height_m` — height above the WGS84 ellipsoid in metres.
+///
+/// # Errors
+///
+/// Returns [`crate::AstroError::InvalidCoordinate`] if any argument is non-finite.
+pub fn geodetic_wgs84_to_ecef(lat_deg: f64, lon_deg: f64, height_m: f64) -> Result<Ecef> {
+    if !lat_deg.is_finite() || !lon_deg.is_finite() || !height_m.is_finite() {
+        return Err(crate::AstroError::InvalidCoordinate(
+            "geodetic latitude, longitude, and height must be finite numbers".to_string(),
+        ));
+    }
+    let f = 1.0 / WGS84_INV_F;
+    let e2 = f * (2.0 - f);
+    let lat = lat_deg.to_radians();
+    let lon = lon_deg.to_radians();
+    let sin_lat = lat.sin();
+    let cos_lat = lat.cos();
+    let cos_lon = lon.cos();
+    let sin_lon = lon.sin();
+    let n = WGS84_A / (1.0 - e2 * sin_lat * sin_lat).sqrt();
+    let x = (n + height_m) * cos_lat * cos_lon;
+    let y = (n + height_m) * cos_lat * sin_lon;
+    let z = (n * (1.0 - e2) + height_m) * sin_lat;
+    Ok(Ecef { x, y, z })
+}
+
+/// Converts **WGS84** [`Ecef`] coordinates to geodetic latitude, longitude, and ellipsoidal height.
+///
+/// Uses [Bowring's closed-form method](https://doi.org/10.1007/BF02521544) for latitude, then
+/// the standard radius of curvature for height — stable from the equator to the poles.
+///
+/// # Errors
+///
+/// Returns [`crate::AstroError::InvalidCoordinate`] if the input contains NaN or infinity.
+pub fn ecef_to_geodetic_wgs84(ecef: Ecef) -> Result<Geodetic> {
+    if ecef.x.is_nan() || ecef.y.is_nan() || ecef.z.is_nan() {
+        return Err(crate::AstroError::InvalidCoordinate(
+            "ECEF coordinates contain NaN values".to_string(),
+        ));
+    }
+    if ecef.x.is_infinite() || ecef.y.is_infinite() || ecef.z.is_infinite() {
+        return Err(crate::AstroError::InvalidCoordinate(
+            "ECEF coordinates contain infinite values".to_string(),
+        ));
+    }
+
+    let (x, y, z) = (ecef.x, ecef.y, ecef.z);
+    let f = 1.0 / WGS84_INV_F;
+    let a = WGS84_A;
+    let b = a * (1.0 - f);
+    let e2 = f * (2.0 - f);
+    let ep2 = (a * a - b * b) / (b * b);
+
+    let p = (x * x + y * y).sqrt();
+    let lon_deg = y.atan2(x).to_degrees();
+
+    // Polar axis: longitude is arbitrary; latitude is ±90°.
+    if p < 1e-9 {
+        let h = z.abs() - b;
+        let lat_deg = if z >= 0.0 { 90.0 } else { -90.0 };
+        return Ok(Geodetic {
+            latitude_deg: lat_deg,
+            longitude_deg: 0.0,
+            height_m: h,
+        });
+    }
+
+    // Bowring's solution for geodetic latitude.
+    let theta = (z * a).atan2(p * b);
+    let sin_t = theta.sin();
+    let cos_t = theta.cos();
+    let lat_rad = (z + ep2 * b * sin_t * sin_t * sin_t).atan2(p - e2 * a * cos_t * cos_t * cos_t);
+    let sin_lat = lat_rad.sin();
+    let cos_lat = lat_rad.cos();
+    let n = a / (1.0 - e2 * sin_lat * sin_lat).sqrt();
+
+    let height_m = if cos_lat.abs() > 1e-12 {
+        p / cos_lat - n
+    } else {
+        // Near poles, avoid division by a tiny cosine.
+        z.abs() / sin_lat.abs() - n * (1.0 - e2)
+    };
+
+    Ok(Geodetic {
+        latitude_deg: lat_rad.to_degrees(),
+        longitude_deg: lon_deg,
+        height_m,
+    })
 }
 
 /// Earth-Centered Inertial (ECI) coordinate system.
@@ -980,5 +1098,49 @@ mod tests {
         
         assert!(error < TOLERANCE_MM, 
             "Round-trip error for large coordinates: {} m (expected < {} m)", error, TOLERANCE_MM);
+    }
+
+    #[test]
+    fn geodetic_wgs84_round_trip_sub_mm() {
+        const MM: f64 = 0.001;
+        let cases = [
+            (0.0, 0.0, 0.0),
+            (45.0, 12.0, 150.0),
+            (-33.857, 151.215, 50.0),
+            (89.0, -120.0, 100.0),
+            (-89.5, 179.999, 10.0),
+        ];
+        for (lat, lon, h_m) in cases {
+            let ecef = geodetic_wgs84_to_ecef(lat, lon, h_m).unwrap();
+            let g = ecef_to_geodetic_wgs84(ecef).unwrap();
+            assert!((g.latitude_deg - lat).abs() < 1e-9, "lat {lat}: got {}", g.latitude_deg);
+            assert!((g.longitude_deg - lon).abs() < 1e-9, "lon {lon}: got {}", g.longitude_deg);
+            assert!((g.height_m - h_m).abs() < MM, "h {h_m}: got {}", g.height_m);
+            let ecef2 = geodetic_wgs84_to_ecef(g.latitude_deg, g.longitude_deg, g.height_m).unwrap();
+            let err = ((ecef2.x - ecef.x).powi(2) + (ecef2.y - ecef.y).powi(2) + (ecef2.z - ecef.z).powi(2)).sqrt();
+            assert!(err < MM, "ECEF round-trip error {err} m for ({lat}, {lon}, {h_m})");
+        }
+    }
+
+    #[test]
+    fn geodetic_wgs84_north_pole_height() {
+        const TOL: f64 = 0.001;
+        let b = WGS84_A * (1.0 - 1.0 / WGS84_INV_F);
+        let ecef = Ecef { x: 0.0, y: 0.0, z: b + 2.5 };
+        let g = ecef_to_geodetic_wgs84(ecef).unwrap();
+        assert!((g.latitude_deg - 90.0).abs() < 1e-6);
+        assert!((g.height_m - 2.5).abs() < TOL);
+    }
+
+    #[test]
+    fn geodetic_wgs84_longitude_branch_at_equator() {
+        let ecef = Ecef {
+            x: -6_378_137.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let g = ecef_to_geodetic_wgs84(ecef).unwrap();
+        assert!((g.latitude_deg - 0.0).abs() < 1e-9);
+        assert!((g.longitude_deg - 180.0).abs() < 1e-9 || (g.longitude_deg + 180.0).abs() < 1e-9);
     }
 }

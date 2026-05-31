@@ -6,6 +6,8 @@ Two transformation families are implemented:
 
 - **RA/Dec ↔ Alt/Az** — equatorial (celestial) to horizontal (observer-based).
 - **ECEF ↔ ECI** — Earth-Centered Earth-Fixed to Earth-Centered Inertial.
+- **ECEF ↔ WGS84 geodetic** — Cartesian Earth-fixed position to latitude, longitude, and
+  ellipsoidal height (`Geodetic`), and back.
 
 References:
 [Equatorial coordinate system](https://en.wikipedia.org/wiki/Equatorial_coordinate_system),
@@ -79,6 +81,19 @@ coordinates either fixed to the stars (ECI) or fixed to Earth's surface (ECEF).
 
 Round-trip accuracy is ~1 mm at Earth scale. See
 [accuracy-and-limits.md](accuracy-and-limits.md) for the precession/nutation caveat.
+
+## ECEF ↔ WGS84 geodetic
+
+**Purpose**: Turn Earth-fixed `(x, y, z)` metres into geodetic latitude, longitude, and
+height above the WGS84 ellipsoid — the usual bridge from propagation output to a map.
+
+**Implementation**: `geodetic_wgs84_to_ecef` and `ecef_to_geodetic_wgs84` in `coordinates.rs`
+use the WGS84 semi-major axis and inverse flattening; the inverse path uses Bowring's
+closed-form latitude followed by the prime-vertical radius for height. Round-trip accuracy is
+on the order of **1 mm** at Earth scale in unit tests.
+
+The `satellite` module wraps the inverse as `ecef_to_geodetic` into `Subpoint` (altitude in
+kilometres) for the tracking API.
 
 ## Frame conventions
 

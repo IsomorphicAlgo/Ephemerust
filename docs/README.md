@@ -13,9 +13,10 @@ and command reference; the pages here go deep.
 | [Coordinate systems](coordinates.md) | RA/Dec ↔ Alt/Az, ECEF ↔ ECI, frame conventions |
 | [Orbital mechanics](orbital-mechanics.md) | Kepler's equation, orbital period, state vectors |
 | [VSOP87 planetary theory](vsop87.md) | Planetary ephemeris: series, data, pipeline |
+| [Satellite tracking plan](satellite-tracking-plan.md) | Iterative, stage-gated plan for TLE/SGP4 tracking and pass prediction |
+| [SGP4 & TLE teaching notes](sgp4.md) | Near-Earth SGP4 narrative, references, and the `sgp4_teaching` module |
 | [Accuracy & limitations](accuracy-and-limits.md) | What's accurate, what's approximate, what's missing |
 | [Architecture](architecture.md) | Module layout, error handling, logging, testing |
-| [Satellite tracking plan](satellite-tracking-plan.md) | Iterative, stage-gated plan for TLE/SGP4 tracking and pass prediction |
 | [Roadmap](roadmap.md) | Phase 2 (API service), server hardware, future work |
 
 ## How the project is organized

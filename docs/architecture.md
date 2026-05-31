@@ -17,7 +17,7 @@ ephemerust/
     ├── celestial.rs    # Sun/Moon positions, rise/set
     ├── orbital.rs      # Kepler's equation, period, state vectors
     ├── planets.rs      # VSOP87 planetary positions
-    └── satellite.rs    # TLE/SGP4, TEME→ECEF→geodetic, look angles, pass prediction
+    └── sgp4_teaching.rs # educational two-body / Kepler scaffolding vs production `sgp4`
 ```
 
 ## Modules
@@ -30,7 +30,7 @@ ephemerust/
 | `celestial.rs` | Sun/Moon position and rise/set; dispatches planet calls |
 | `orbital.rs` | Orbital mechanics |
 | `planets.rs` | VSOP87 ephemeris (complex and self-contained) |
-| `satellite.rs` | TLE/SGP4, TEME→ECEF→geodetic, look angles, pass prediction (ground track next) |
+| `sgp4_teaching.rs` | Educational Kepler / mean-motion helpers vs `sgp4` (see `docs/sgp4.md`) |
 
 **Separation rationale**: `celestial.rs` handles the simpler Sun/Moon models and routes
 planet requests to `planets.rs`, which is kept separate because VSOP87 is large and
@@ -44,8 +44,11 @@ self-contained.
   `ecef_to_geodetic_wgs84`
 - Celestial types: `CelestialObject`, `ObserverLocation`, `RiseSetTimes`
 - Planet types: `Planet`, `calculate_planet_position`
-- Satellite types: `Tle`, `TleError`, `TemeState`, `Subpoint`, `LookAngles`, `Pass`; functions
-  `propagate`, `teme_to_ecef`, `ecef_to_geodetic`, `subpoint`, `look_angles`, `predict_passes`
+- Satellite types: `Tle`, `TleError`, `TemeState`, `Subpoint`, `LookAngles`, `Pass`,
+  `GroundTrackSample`; functions `propagate`, `teme_to_ecef`, `ecef_to_geodetic`, `subpoint`,
+  `look_angles`, `predict_passes`, `ground_track`, `ground_track_to_csv`, `ground_track_to_json`
+- **Teaching (non-operational):** `sgp4_teaching` — mean motion → **a**, two-body state vs
+  `sgp4` for pedagogy (`docs/sgp4.md`)
 - Time functions: `julian_date`, `greenwich_mean_sidereal_time`, `local_sidereal_time`
 - Errors: `AstroError`, `Result<T>`
 
@@ -57,7 +60,8 @@ self-contained.
 | `chrono` | date/time handling |
 | `thiserror` / `anyhow` | error handling |
 | `log` / `env_logger` | logging |
-| `serde` | serialization (date/time) |
+| `serde` | serialization (chrono types, ground-track JSON) |
+| `serde_json` | JSON export (`ground_track_to_json`, `track --format json`) |
 | `sgp4` | TLE parsing and SGP4/SDP4 satellite propagation engine |
 | `criterion` (dev) | benchmarking |
 
@@ -112,14 +116,15 @@ Multi-level logging via `log` + `env_logger`; `--verbose` raises the level to de
 
 ## Testing
 
-The suite has **101 unit tests + 4 CLI integration tests + 20 doctests** (all passing).
+The suite has **111 unit tests + 9 CLI integration tests + 20 doctests** (all passing).
 
 - **Unit tests** — per-function, with known reference values, edge cases (poles, equator,
   origin, large coordinates), input validation, round-trip accuracy, and benchmarks.
 - **Integration tests** — end-to-end CLI workflows and cross-module pipelines, including
   `tests/cli_track.rs`, which spawns the binary and asserts that malformed TLEs produce a
   legible educational error and a non-zero exit code, and that a valid TLE prints the
-  sub-satellite and look-angle sections.
+  sub-satellite and look-angle sections, optional pass prediction, ground-track CSV, JSON
+  `track` output, and errors for conflicting or unsupported TLE sources.
 - **Validation tests** — comparison with authoritative sources (JPL Horizons, Meeus).
 - **Doctests** — keep documentation examples compiling and correct.
 

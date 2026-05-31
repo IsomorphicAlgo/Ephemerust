@@ -11,6 +11,7 @@
 | ECEF ↔ WGS84 geodetic round-trip | ~1 mm at Earth scale |
 | Satellite look angles (azimuth / elevation) | on the order of a few degrees vs. external tools | TLE age, omitted precession/nutation, simplified TEME→ECEF bridge |
 | Satellite pass prediction (`predict_passes`) | AOS/LOS times typically within ~1 minute of external tools; max elevation within a few degrees | Coarse scan step, bisection/ternary refinement, same frame/TLE limitations as look angles; GEO-like orbits use a simplified visibility model |
+| Satellite `sgp4_teaching` (two-body scaffold) | Matches Kepler period from TLE mean motion; **does not** match SGP4 state (documented large ‖Δ**r**‖ vs `sgp4`) | Not a propagator; deep-space / low-n element sets rejected by `teaching_supported` |
 | Planet positions (truncated VSOP87D) | a few arcminutes (vs. JPL Horizons at J2000.0) |
 
 See [vsop87.md](vsop87.md) for the per-planet VSOP87 accuracy breakdown.

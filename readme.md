@@ -32,11 +32,11 @@ physical reasoning alongside the code, and errors are written to hopefully teach
 
 The current development focus extends the project into **satellite tracking and pass
 prediction** — taking a Two-Line Element set (TLE) through SGP4 propagation to ground tracks,
-observer look angles, and visible-pass predictions. The work follows a **library-first**
+observer look angles, visible-pass predictions, and sampled ground-track export (CSV/JSON). The work follows a **library-first**
 design: the production propagator is provided by the validated
 [sgp4](https://crates.io/crates/sgp4) crate, while this project supplies the conversion and
 prediction layer that the raw propagator omits (TEME → ECEF → geodetic → topocentric →
-passes), documented to the same standard as the rest of the codebase. The staged plan lives in
+passes → ground-track sampling), documented to the same standard as the rest of the codebase. The staged plan lives in
 the [satellite-tracking plan](docs/satellite-tracking-plan.md).
 
 The project is structured in two phases:
@@ -62,14 +62,14 @@ The project is structured in two phases:
 | Satellite TLE → TEME → subpoint (WGS84)      | ✅ working (see [plan](docs/satellite-tracking-plan.md))                            |
 | Satellite look angles (TLE → observer)       | ✅ working (ENU / az–el–range–range-rate; see [plan](docs/satellite-tracking-plan.md)) |
 | Satellite pass prediction (`predict_passes`) | ✅ working (coarse scan + bisection; see [plan](docs/satellite-tracking-plan.md))        |
-| Satellite ground track / CSV export          | 🚧 in progress (Milestone 6)                                                         |
+| Satellite ground track (sampled subpoint + CSV/JSON) | ✅ working (`ground_track`; see [plan](docs/satellite-tracking-plan.md)) |
 
 
 ## Install & build
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (101 unit + 4 CLI integration + 20 doctests)
+cargo test             # run the test suite (111 unit + 9 CLI integration + 20 doctests)
 cargo run -- --help    # list all commands
 ```
 
@@ -148,7 +148,7 @@ cargo run -- track --tle-file iss.tle
 Optional: `--predict-passes-hours <n>` with `--pass-min-elevation-deg` (default 10) lists
 passes for the **n** hours after the element-set epoch from the default (or supplied) observer.
 
-Ground-track sampling and richer CLI modes are planned for Milestones 6–7.
+`--mode` selects **tle**, **state**, **subpoint**, **look**, **passes** (needs `--predict-passes-hours` > 0), **ground** (needs `--ground-track-hours` > 0), or **all** (default). `--format json` prints one JSON object (TLE summary, observer, state, subpoint, look angles, optional passes and ground-track samples). `--tle-url` is accepted for future network fetch but currently returns a clear “not implemented” error. `--ground-track-json` still toggles CSV vs. JSON array for the ground-track section in **human** format.
 
 ## Documentation
 
@@ -159,6 +159,7 @@ The full mathematics, conventions, and engineering details live in [docs/](docs/
 - [Coordinate systems](docs/coordinates.md) — RA/Dec ↔ Alt/Az, ECEF ↔ ECI, WGS84 geodetic, ENU look angles
 - [Orbital mechanics](docs/orbital-mechanics.md) — Kepler's equation, period, state vectors
 - [VSOP87 planetary theory](docs/vsop87.md) — series, data structures, conversion pipeline
+- [SGP4 & TLE teaching notes](docs/sgp4.md) — SGP4 context and the `sgp4_teaching` module
 - [Accuracy & limitations](docs/accuracy-and-limits.md)
 - [Architecture](docs/architecture.md) — modules, errors, logging, testing
 - [Roadmap](docs/roadmap.md) — Phase 2 (API service) and deployment plans
@@ -189,7 +190,7 @@ this project wraps.
 `[anyhow](https://crates.io/crates/anyhow)` — structured error handling.
 - `[log](https://crates.io/crates/log)` and
 `[env_logger](https://crates.io/crates/env_logger)` — logging.
-- `[serde](https://crates.io/crates/serde)` — serialization.
+- `[serde_json](https://crates.io/crates/serde_json)` — JSON serialization for ground-track export.
 - `[criterion](https://crates.io/crates/criterion)` — benchmarking (development dependency).
 
 ### Algorithms, theory & data

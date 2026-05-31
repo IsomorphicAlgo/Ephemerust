@@ -14,6 +14,20 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
 
 ### Added
 
+- **SGP4 teaching layer (Milestone 8)** — new `docs/sgp4.md` (near-Earth SGP4 narrative,
+  references, Ephemerust layering) and [`sgp4_teaching`](src/sgp4_teaching.rs): WGS-72
+  mean-motion → **a**, linear mean-anomaly advance, two-body state vs `sgp4` oracle checks.
+  Not used by production propagation. See [docs/sgp4.md](docs/sgp4.md).
+- **Track CLI (Milestone 7)** — `track` supports `--mode` (`all`, `tle`, `state`, `subpoint`,
+  `look`, `passes`, `ground`), `--format human|json` for a unified JSON document, exclusive
+  TLE inputs (`--tle-file`, `--tle`, `--tle-url` placeholder), and validation for pass/ground
+  modes. Library: `Serialize` on `TemeState`, `LookAngles`, and `Pass` for machine-readable
+  output. See [docs/satellite-tracking-plan.md](docs/satellite-tracking-plan.md).
+- **Ground track (Milestone 6)** — `ground_track` samples `[window_start, window_end)` every
+  `step` into `GroundTrackSample` (UTC + `Subpoint`); `ground_track_to_csv` and
+  `ground_track_to_json` for plotting pipelines. `track` adds `--ground-track-hours`,
+  `--ground-track-step-sec`, and `--ground-track-json`. See
+  [docs/satellite-tracking-plan.md](docs/satellite-tracking-plan.md).
 - **Pass prediction (Milestone 5)** — `predict_passes` finds passes over `[window_start,
   window_end)` with a coarse elevation ladder and bisection-refined AOS/LOS; culmination via
   ternary search; [`Pass`] now includes azimuths at AOS/LOS. GEO-like element sets use a

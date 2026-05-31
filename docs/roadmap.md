@@ -7,8 +7,9 @@ service that can run on a home server rack and be reached remotely.
 
 The command-line calculator for astronomical and orbital-mechanics calculations. Implemented
 and working: time systems, Sun/Moon/planet positions and rise/set, RA/Dec ↔ Alt/Az,
-ECEF ↔ ECI, the `orbital` command (period, true anomaly, state vectors), and planet
-positions for all eight planets via truncated VSOP87D.
+ECEF ↔ ECI, the `orbital` command (period, true anomaly, state vectors), planet
+positions for all eight planets via truncated VSOP87D, satellite `track` (modes, JSON, TLE
+sources), and teaching notes plus the `sgp4_teaching` scaffold (`docs/sgp4.md`).
 
 ### Remaining Phase 1 work
 

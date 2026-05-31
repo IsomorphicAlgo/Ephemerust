@@ -21,7 +21,9 @@
 //! - Positions are kilometres, velocities kilometres per second, angles degrees, and times
 //!   UTC unless stated otherwise.
 //!
-//! The staged implementation plan lives in `docs/satellite-tracking-plan.md`. Implemented so
+//! The staged implementation plan lives in `docs/satellite-tracking-plan.md`. Companion theory
+//! for the SGP4 layer is in `docs/sgp4.md`, with the non-operational [`crate::sgp4_teaching`]
+//! module for Kepler / mean-motion pedagogy. Implemented so
 //! far: [`Tle`] parses and validates 2- and 3-line element sets (with structured, educational
 //! [`TleError`]s); [`propagate`] takes a parsed element set to a [`TemeState`] via the `sgp4`
 //! engine; [`teme_to_ecef`] and [`ecef_to_geodetic`] bridge TEME to WGS84 geodetic coordinates
@@ -29,7 +31,8 @@
 //! [`subpoint`] combines propagation with that chain for the sub-satellite point; and
 //! [`look_angles`] completes the topocentric East–North–Up (ENU) pipeline for azimuth, elevation,
 //! slant range, and range rate; [`predict_passes`] finds visible passes over a time window using
-//! a coarse elevation scan with bisection refinement. Ground tracks are the next milestone.
+//! a coarse elevation scan with bisection refinement; [`ground_track`] samples the sub-satellite
+//! path with [`ground_track_to_csv`] / [`ground_track_to_json`] for plotting pipelines.
 //!
 //! # Example
 //!
@@ -51,6 +54,7 @@ use crate::celestial::ObserverLocation;
 use crate::coordinates::{Ecef, Eci, eci_to_ecef, ecef_to_geodetic_wgs84, geodetic_wgs84_to_ecef};
 use crate::{AstroError, Result};
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
+use serde::Serialize;
 use thiserror::Error;
 
 /// A structured, *educational* error describing why a Two-Line Element set could not be
@@ -284,7 +288,7 @@ pub struct Tle {
 /// Position and velocity in the TEME frame of epoch.
 ///
 /// Position is in kilometres and velocity in kilometres per second.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct TemeState {
     /// Position vector `[x, y, z]` in kilometres (TEME).
     pub position_km: [f64; 3],
@@ -293,7 +297,7 @@ pub struct TemeState {
 }
 
 /// A sub-satellite (ground) point: the geodetic position directly beneath the satellite.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Subpoint {
     /// Geodetic latitude in degrees, positive north.
     pub latitude_deg: f64,
@@ -304,7 +308,7 @@ pub struct Subpoint {
 }
 
 /// Observer-relative look angles for pointing and visibility.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct LookAngles {
     /// Azimuth in degrees, measured clockwise from true north.
     pub azimuth_deg: f64,
@@ -317,7 +321,7 @@ pub struct LookAngles {
 }
 
 /// A single visible pass of a satellite over an observer.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Pass {
     /// Acquisition of signal: the satellite crosses the elevation mask while rising.
     pub aos: DateTime<Utc>,
@@ -331,6 +335,17 @@ pub struct Pass {
     pub aos_azimuth_deg: f64,
     /// Azimuth at LOS (degrees, clockwise from true north).
     pub los_azimuth_deg: f64,
+}
+
+/// One sample along a satellite **ground track**: UTC time plus the corresponding [`Subpoint`].
+///
+/// Produced by [`ground_track`]; serialize with [`ground_track_to_csv`] or [`ground_track_to_json`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct GroundTrackSample {
+    /// Sample time (UTC).
+    pub time: DateTime<Utc>,
+    /// Geodetic sub-satellite point at `time`.
+    pub subpoint: Subpoint,
 }
 
 impl Tle {
@@ -697,6 +712,79 @@ pub fn subpoint(tle: &Tle, time: DateTime<Utc>) -> Result<Subpoint> {
     let state = propagate(tle, time)?;
     let ecef = teme_to_ecef(&state, time)?;
     ecef_to_geodetic(ecef)
+}
+
+/// Samples the satellite **ground track** as WGS84 sub-satellite points from `window_start`
+/// (inclusive) through `window_end` (**exclusive**), every `step`.
+///
+/// Each sample is [`subpoint`] at `window_start`, `window_start + step`, … while strictly
+/// before `window_end`. If `window_end <= window_start`, returns an empty vector. `step` must
+/// be strictly positive.
+///
+/// # Errors
+///
+/// Propagation or geodetic conversion errors surface from [`subpoint`].
+pub fn ground_track(
+    tle: &Tle,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    step: Duration,
+) -> Result<Vec<GroundTrackSample>> {
+    if step <= Duration::zero() {
+        return Err(AstroError::SatelliteError(
+            "ground_track step must be strictly positive".into(),
+        ));
+    }
+    if window_end <= window_start {
+        return Ok(Vec::new());
+    }
+
+    let span_ns = (window_end - window_start)
+        .num_nanoseconds()
+        .unwrap_or(i64::MAX)
+        .max(0);
+    let step_ns = step.num_nanoseconds().unwrap_or(i64::MAX).max(1);
+    let est = ((span_ns / step_ns) as usize).min(500_000);
+    let mut out = Vec::with_capacity(est);
+
+    let mut t = window_start;
+    while t < window_end {
+        let s = subpoint(tle, t)?;
+        out.push(GroundTrackSample {
+            time: t,
+            subpoint: s,
+        });
+        t += step;
+    }
+    Ok(out)
+}
+
+/// Serializes ground-track samples as **CSV** (RFC 4180–style: header row, comma-separated).
+///
+/// The `time_utc` column uses RFC 3339 / ISO-8601 with fractional seconds. Angles are in
+/// degrees; altitude is ellipsoidal height in kilometres (same as [`Subpoint`]).
+pub fn ground_track_to_csv(samples: &[GroundTrackSample]) -> String {
+    use std::fmt::Write;
+    let mut buf = String::new();
+    buf.push_str("time_utc,latitude_deg,longitude_deg,altitude_km\n");
+    for row in samples {
+        let _ = writeln!(
+            &mut buf,
+            "{},{:.9},{:.9},{:.6}",
+            row.time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            row.subpoint.latitude_deg,
+            row.subpoint.longitude_deg,
+            row.subpoint.altitude_km
+        );
+    }
+    buf
+}
+
+/// Serializes ground-track samples as a **JSON** array (pretty-printed).
+pub fn ground_track_to_json(samples: &[GroundTrackSample]) -> Result<String> {
+    serde_json::to_string_pretty(samples).map_err(|e| {
+        AstroError::SatelliteError(format!("JSON serialization failed: {e}"))
+    })
 }
 
 /// Earth rotation rate about ECEF +Z (rad/s), conventional sidereal value used with GMST.
@@ -1464,6 +1552,99 @@ mod tests {
             }
         }
         assert!(found, "no approaching 1 s window found within 1 h of epoch");
+    }
+
+    #[test]
+    fn ground_track_rejects_nonpositive_step() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let start = tle.epoch;
+        let end = start + Duration::hours(1);
+        let err = ground_track(&tle, start, end, Duration::zero()).unwrap_err();
+        assert!(matches!(err, AstroError::SatelliteError(_)));
+    }
+
+    #[test]
+    fn ground_track_empty_for_reversed_window() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let start = tle.epoch;
+        let v = ground_track(&tle, start, start, Duration::seconds(60)).unwrap();
+        assert!(v.is_empty());
+        let v2 = ground_track(&tle, start, start - Duration::hours(1), Duration::seconds(60)).unwrap();
+        assert!(v2.is_empty());
+    }
+
+    #[test]
+    fn ground_track_sample_count_matches_span() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let start = tle.epoch;
+        let end = start + Duration::hours(1);
+        let step = Duration::minutes(10);
+        let v = ground_track(&tle, start, end, step).unwrap();
+        // Inclusive start, exclusive end: 0,10,…,50 minutes → 6 samples
+        assert_eq!(v.len(), 6);
+        assert_eq!(v[0].time, start);
+        assert_eq!(v.last().unwrap().time, start + Duration::minutes(50));
+    }
+
+    fn lon_unwrapped_delta_deg(prev_lon: f64, next_lon: f64) -> f64 {
+        let mut d = next_lon - prev_lon;
+        while d > 180.0 {
+            d -= 360.0;
+        }
+        while d < -180.0 {
+            d += 360.0;
+        }
+        d
+    }
+
+    #[test]
+    fn ground_track_longitude_shift_per_orbit_matches_earth_rotation() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let t0 = tle.epoch;
+        let n = tle.mean_motion;
+        assert!(n > 0.0);
+        let period_sec = 86400.0 / n;
+        let dt_ms = (period_sec * 1000.0).round() as i64;
+        let p0 = subpoint(&tle, t0).unwrap();
+        let p1 = subpoint(&tle, t0 + Duration::milliseconds(dt_ms)).unwrap();
+        let dlon = lon_unwrapped_delta_deg(p0.longitude_deg, p1.longitude_deg);
+        let expected = -360.0 * (period_sec / 86164.0905);
+        assert!(
+            (dlon - expected).abs() < 8.0,
+            "Δlon {dlon}° vs expected ~{expected}° (one orbit, ISS TLE)"
+        );
+    }
+
+    #[test]
+    fn ground_track_continuity_small_lon_steps_for_60s_sampling() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let start = tle.epoch;
+        let end = start + Duration::minutes(45);
+        let step = Duration::seconds(60);
+        let v = ground_track(&tle, start, end, step).unwrap();
+        assert!(v.len() >= 2);
+        let mut max_dlon = 0.0_f64;
+        for w in v.windows(2) {
+            let d = lon_unwrapped_delta_deg(w[0].subpoint.longitude_deg, w[1].subpoint.longitude_deg).abs();
+            max_dlon = max_dlon.max(d);
+        }
+        assert!(
+            max_dlon < 22.0,
+            "60 s steps should not produce huge unwrapped longitude hops; max Δlon {max_dlon}°"
+        );
+    }
+
+    #[test]
+    fn ground_track_csv_and_json_round_trip_shape() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let start = tle.epoch;
+        let end = start + Duration::minutes(30);
+        let v = ground_track(&tle, start, end, Duration::minutes(10)).unwrap();
+        let csv = ground_track_to_csv(&v);
+        assert!(csv.starts_with("time_utc,latitude_deg,longitude_deg,altitude_km\n"));
+        assert!(csv.lines().count() >= 2);
+        let json = ground_track_to_json(&v).unwrap();
+        assert!(json.contains("\"latitude_deg\"") && json.contains("\"time\""));
     }
 
     #[test]

@@ -211,8 +211,7 @@ Find and characterize visible passes over an observer for a time window.
 
 ### Stage gate
 
-Predicted passes match external references within tolerance; edge cases handled.
-**Await sign-off.**
+**Signed off** (Milestone 5 approved; `predict_passes`, azimuths at AOS/LOS, GEO shortcut, CLI, and tests in-tree).
 
 ---
 
@@ -222,9 +221,11 @@ Produce sampled sub-satellite tracks for visualization and analysis.
 
 ### Deliverables
 
-- `ground_track(tle, window, step) -> Vec<Subpoint>` sampling sub-satellite points over a
-  time window.
-- Output serialization to CSV and JSON for downstream plotting.
+- `ground_track(tle, window_start, window_end, step) -> Vec<GroundTrackSample>` sampling
+  sub-satellite points over `[window_start, window_end)` (end exclusive), each row carrying
+  UTC time plus `Subpoint` (latitude, longitude, ellipsoidal altitude in km).
+- Output serialization: `ground_track_to_csv` and `ground_track_to_json` for downstream
+  plotting tools.
 
 ### Test plan
 
@@ -235,7 +236,7 @@ Produce sampled sub-satellite tracks for visualization and analysis.
 ### Stage gate
 
 Track geometry matches expected orbital behavior; serialization formats validated.
-**Await sign-off.**
+**Signed off** (Milestone 6 approved; `ground_track`, CSV/JSON, CLI flags, and tests in-tree).
 
 ---
 
@@ -245,21 +246,26 @@ Expose the library through a coherent, well-formatted command interface.
 
 ### Deliverables
 
-- A `track` subcommand with modes for current position/subpoint, look angles, pass
-  prediction, and ground track.
-- TLE source flags: inline, file, and (placeholder for) network fetch.
-- Output consistent with existing commands, plus an optional machine-readable JSON output.
+- `track` **modes** (`--mode`): `all` (default), `tle`, `state`, `subpoint`, `look`, `passes`
+  (requires `--predict-passes-hours` > 0), `ground` (requires `--ground-track-hours` > 0).
+- **Output format** (`--format`): `human` (default) or `json` — a single pretty-printed JSON
+  document for scripting (`tle`, `observer`, `state`, `subpoint`, `look_angles`, optional
+  `passes` / `ground_track`, and pass/ground metadata fields when applicable).
+- TLE sources: `--tle-file`, `--tle`, and **`--tle-url`** (exclusive); URL fetch returns a clear
+  “not implemented yet” error (placeholder for a future `network` feature).
+- Human output remains section-oriented; `--ground-track-json` still selects CSV vs. raw JSON
+  array for the ground-track block when `--format human`.
 
 ### Test plan
 
-- Integration tests exercise each mode end-to-end and assert formatted output.
-- Snapshot tests cover the human-readable and JSON output formats.
+- Integration tests exercise each mode end-to-end and assert formatted output (including
+  structural checks on JSON where applicable).
 - Error-message tests cover missing/invalid TLE sources and out-of-range arguments.
 
 ### Stage gate
 
 All CLI modes function end-to-end with correct formatting and error handling.
-**Await sign-off.**
+**Signed off** (Milestone 7 approved; `track` modes, JSON output, TLE source rules, and integration tests in-tree).
 
 ---
 
@@ -269,10 +275,13 @@ Deliver the educational artifact that distinguishes the project.
 
 ### Deliverables
 
-- `docs/sgp4.md`: a step-by-step derivation and explanation of the near-Earth SGP4 model,
-  in the established documentation style.
-- An optional `sgp4_teaching` module implementing the near-Earth SGP4 path from first
-  principles, clearly marked as educational and not the production engine.
+- **`docs/sgp4.md`** — near-Earth SGP4 / TLE narrative, Kepler’s-law link to mean motion,
+  conceptual pipeline, references (Spacetrack #3, Vallado 2006), and how Ephemerust layers
+  `sgp4` + `satellite` + `sgp4_teaching`.
+- **`sgp4_teaching` module** — WGS-72 μ, mean-motion → semi-major axis, linear mean-anomaly
+  advance, two-body state via `orbital::elements_to_state_vector`; compared to the `sgp4`
+  oracle in unit tests with **documented loose** position tolerances; `teaching_supported` gate
+  for low mean motion / non-LEO band.
 
 ### Test plan
 

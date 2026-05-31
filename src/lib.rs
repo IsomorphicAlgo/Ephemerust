@@ -28,7 +28,8 @@
 //! | [`celestial`] | Sun/Moon position and rise/set; dispatch to planets |
 //! | [`orbital`] | Kepler's equation, orbital period, elements → state vectors |
 //! | [`planets`] | VSOP87 planetary ephemeris |
-//! | [`satellite`] | TLE / SGP4 propagation, TEME → ECEF → geodetic, sub-satellite point |
+//! | [`satellite`] | TLE / SGP4 propagation, TEME → ECEF → geodetic, look angles, passes, ground track |
+//! | [`sgp4_teaching`] | Educational two-body / Kepler scaffolding vs the real `sgp4` model (`docs/sgp4.md`) |
 //!
 //! ## Conventions
 //!
@@ -62,6 +63,11 @@ pub mod time;
 pub mod orbital;
 pub mod planets;
 pub mod satellite;
+/// **Educational** SGP4-related mechanics (two-body skeleton vs production `sgp4`).
+///
+/// This is **not** used by [`satellite::propagate`]; it exists for learning and regression
+/// checks documented in `docs/sgp4.md`.
+pub mod sgp4_teaching;
 
 /// Error handling: the crate-wide [`error::AstroError`] type and [`error::Result`] alias.
 pub mod error {
@@ -134,8 +140,9 @@ pub use planets::{calculate_planet_position, Planet};
 
 // Re-export satellite types and propagation / ground-point pipeline
 pub use satellite::{
-    ecef_to_geodetic, look_angles, predict_passes, propagate, subpoint, teme_to_ecef, LookAngles,
-    Pass, Subpoint, TemeState, Tle, TleError,
+    ecef_to_geodetic, ground_track, ground_track_to_csv, ground_track_to_json, look_angles,
+    predict_passes, propagate, subpoint, teme_to_ecef, GroundTrackSample, LookAngles, Pass,
+    Subpoint, TemeState, Tle, TleError,
 };
 
 // Re-export time functions

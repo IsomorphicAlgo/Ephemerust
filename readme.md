@@ -36,13 +36,12 @@ observer look angles, visible-pass predictions, and sampled ground-track export 
 design: the production propagator is provided by the validated
 [sgp4](https://crates.io/crates/sgp4) crate, while this project supplies the conversion and
 prediction layer that the raw propagator omits (TEME → ECEF → geodetic → topocentric →
-passes → ground-track sampling), documented to the same standard as the rest of the codebase. The staged plan lives in
-the [satellite-tracking plan](docs/satellite-tracking-plan.md).
+passes → ground-track sampling), documented to the same standard as the rest of the codebase. The staged plan lives in the [satellite-tracking plan](docs/satellite-tracking-plan.md); **milestones M0–M9** there (through library polish and the SGP4 teaching layer) are **signed off**.
 
 The project is structured in two phases:
 
 1. **Phase 1 — CLI tool** (the core of this repository): a command-line toolset for
-  astronomical calculations, now being extended with satellite tracking.
+  astronomical calculations **including** satellite tracking (see the [plan](docs/satellite-tracking-plan.md)).
 2. **Phase 2 — data services**: API-based data access, building toward a standalone,
   self-hosted Rust service accessible remotely. See the [roadmap](docs/roadmap.md).
 
@@ -63,7 +62,7 @@ The project is structured in two phases:
 | Satellite look angles (TLE → observer)       | ✅ working (ENU / az–el–range–range-rate; see [plan](docs/satellite-tracking-plan.md)) |
 | Satellite pass prediction (`predict_passes`) | ✅ working (coarse scan + bisection; see [plan](docs/satellite-tracking-plan.md))        |
 | Satellite ground track (sampled subpoint + CSV/JSON) | ✅ working (`ground_track`; see [plan](docs/satellite-tracking-plan.md)) |
-
+| Satellite plan (M0–M9) — library polish & teaching | ✅ **signed off** ([plan](docs/satellite-tracking-plan.md): track CLI, passes, ground track, JSON, `network` stub, `sgp4_teaching`, docs) |
 
 ## Install & build
 

@@ -18,7 +18,8 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
   flag (stub handler unchanged); default integration tests assert clap rejects the flag when
   disabled. `examples/track_subpoint.rs` demonstrates `Tle` + `subpoint` from the library.
   Crate rustdoc adds MSRV/feature notes, `#![deny(rustdoc::broken_intra_doc_links)]`, and the
-  satellite-tracking plan records M8 signed off and a crates.io publication deferral for `0.x`.
+  satellite-tracking plan records milestones **8–9** signed off with a crates.io publication
+  deferral for `0.x`.
 - **SGP4 teaching layer (Milestone 8)** — new `docs/sgp4.md` (near-Earth SGP4 narrative,
   references, Ephemerust layering) and [`sgp4_teaching`](src/sgp4_teaching.rs): WGS-72
   mean-motion → **a**, linear mean-anomaly advance, two-body state vs `sgp4` oracle checks.

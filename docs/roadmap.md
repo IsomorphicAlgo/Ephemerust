@@ -10,7 +10,8 @@ and working: time systems, Sun/Moon/planet positions and rise/set, RA/Dec ↔ Al
 ECEF ↔ ECI, the `orbital` command (period, true anomaly, state vectors), planet
 positions for all eight planets via truncated VSOP87D, satellite `track` (modes, JSON, TLE
 sources; optional `network` feature for `--tle-url` stub), `examples/track_subpoint.rs`, and
-teaching notes plus the `sgp4_teaching` scaffold (`docs/sgp4.md`).
+teaching notes plus the `sgp4_teaching` scaffold (`docs/sgp4.md`). The
+[satellite-tracking plan](satellite-tracking-plan.md) milestones **M0–M9** are signed off.
 
 ### Remaining Phase 1 work
 

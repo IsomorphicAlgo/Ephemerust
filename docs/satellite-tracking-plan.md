@@ -310,7 +310,7 @@ Prepare the crate for external consumption.
 - Feature flags: **`network`** gates `--tle-url` on the `track` command (stub only until HTTP
   fetch is implemented); MSRV documented in `Cargo.toml` and `readme.md`.
 - Updated `readme.md`, `CHANGELOG.md`, architecture/test-count tables, and this plan
-  (Milestone 8 signed off; publication to crates.io deferred while on `0.x`).
+  (Milestones 8–9 signed off; publication to crates.io deferred while on `0.x`).
 - Example program: `examples/track_subpoint.rs` (`cargo build --examples`).
 
 ### Test plan
@@ -323,9 +323,9 @@ Prepare the crate for external consumption.
 ### Stage gate
 
 API is documented and stable; tooling is clean; a publication decision is recorded.
-**Await sign-off.** (Publication: **not** publishing to crates.io in this milestone; API
-remains `0.x` per [`CHANGELOG.md`](../CHANGELOG.md); MSRV and optional `network` CLI flag are
-documented in [`readme.md`](../readme.md).)
+**Signed off** (Milestone 9 approved; `network` feature + `examples/track_subpoint`, rustdoc
+MSRV/feature table, `cargo clippy` / `cargo doc` clean; publication to crates.io **deferred**
+while on `0.x` — see [`readme.md`](../readme.md) and [`CHANGELOG.md`](../CHANGELOG.md).)
 
 ---
 

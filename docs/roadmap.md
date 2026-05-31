@@ -1,7 +1,8 @@
 # Roadmap
 
-This project is being built in two phases, and is gradually moving toward a standalone Rust
-service that can run on a home server rack and be reached remotely.
+This project is being built in **two phases**: a **library + CLI** (Phase 1) and **networked /
+hosted capabilities** (Phase 2). Full space-weather ingestion + REST is intentionally scoped to
+companion **Rusty_Server**; Ephemerust may still grow optional thin HTTP for standalone demos.
 
 ## Phase 1 — CLI astronomy tool ✅ (in progress, core complete)
 
@@ -21,27 +22,26 @@ teaching notes plus the `sgp4_teaching` scaffold (`docs/sgp4.md`). The
   and proper motion; additional frames (GCRS, ITRS); precession/nutation and refraction
   corrections (see [accuracy-and-limits.md](accuracy-and-limits.md)).
 
-## Phase 2 — Space-weather web service ⏳ (planned)
+## Phase 2 — Hosted services & HTTP (re-scoped) ⏳
 
-A REST API for fetching, caching, and serving space-weather data relevant to satellite
-operations, complementing the CLI tool. This phase is where the project grows from a
-local tool into networked infrastructure.
+Ephemerust remains the **library + CLI** for astronomy and satellite propagation. A separate
+**Rusty_Server** deployment hosts the space-weather stack: NOAA/DONKI ingestion, MySQL,
+caching, rate limits, auth, and REST—including **`/api/v1/ephemeris/...`** endpoints that call
+**`ephemerust`** as a dependency. Ephemerust does **not** duplicate that NOAA product surface
+as a second full web service.
 
-### Planned features
+### What may still land in Ephemerust for “Phase 2”
 
-- **Data fetching** — integration with the NOAA Space Weather API and similar sources.
-- **Local caching** — reduce upstream calls and improve response times.
-- **REST endpoints** — query current conditions and historical data.
-- **Storage** — historical data in SQLite or PostgreSQL.
-- **Production concerns** — rate limiting and authentication.
-- **Deployment** — self-hosted on a personal server rack.
+- **Optional** thin HTTP or examples for **standalone demos** of the library without Rusty_Server
+  (narrow scope—not a replacement for Rusty_Server’s space-weather API).
+- Library features both CLI and API consumers need (e.g. `network` / `--tle-url`, propagation
+  accuracy, teaching scaffolds).
 
-### Use cases
+### Use cases (space weather & operations)
 
-- Satellite operators monitoring space-weather conditions.
-- Mission planning from historical space-weather patterns.
-- Real-time alerts for solar flares and geomagnetic storms.
-- Radiation-level monitoring for space missions.
+- **Rusty_Server** (companion repo): satellite operators and dashboards consuming space weather
+  and ephemeris JSON over the network.
+- **Ephemerust CLI**: local calculations, scripting, and teaching workflows without running a server.
 
 ## Deployment target
 
@@ -62,7 +62,11 @@ accessible from remote locations.
 
 ### Hosting considerations
 
-The host needs to run the Rust CLI/service, the REST API, a database (SQLite or
-PostgreSQL), and web-server capabilities, with optional container support for deployment
+For the **space-weather + ephemeris REST** product described in Phase 2 above, the intended
+runtime is **Rusty_Server** (MySQL, nginx/systemd, etc.). The host below also describes the
+Ephemerust author’s rack used for **CLI builds**, optional local demos, and Rusty_Server.
+
+The machine needs to run the Rust CLI, any optional demo HTTP, a database when running
+Rusty_Server (MySQL today), and web-server capabilities, with optional container support for deployment
 flexibility. Options under consideration: a Linux distribution (Ubuntu Server, Debian, or
 custom), containerization (Docker/Kubernetes), or bare-metal deployment.

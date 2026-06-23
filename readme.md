@@ -10,9 +10,9 @@ astronomy toolset, and a study project in Rust and applied astrophysics.
 
 Ephemerust stands on the shoulders of the open-source astrodynamics community: it is built
 *around* established tools rather than reinventing them. Most directly, it wraps the
-`[sgp4](https://crates.io/crates/sgp4)` crate (the validated SGP4/SDP4 propagation engine) and
-relies on `[chrono](https://crates.io/crates/chrono)` for time handling and
-`[clap](https://crates.io/crates/clap)` for its command-line interface. Sincere thanks to the
+[`sgp4`](https://crates.io/crates/sgp4) crate (the validated SGP4/SDP4 propagation engine) and
+relies on [`chrono`](https://crates.io/crates/chrono) for time handling and
+[`clap`](https://crates.io/crates/clap) for its command-line interface. Sincere thanks to the
 maintainers of those crates, and to the authors of the foundational references — Jean Meeus,
 David Vallado, and the VSOP87 planetary theory of Bretagnon and Francou — without whose work
 this project would not be possible. Full attributions are listed under
@@ -66,7 +66,7 @@ The project is structured in two phases:
 
 ## Install & build
 
-From [crates.io](https://crates.io/crates/ephemerust) (release **0.3.0**):
+From [crates.io](https://crates.io/crates/ephemerust) (release **0.4.0**):
 
 ```bash
 cargo install ephemerust          # CLI binary on your PATH
@@ -192,7 +192,7 @@ changes and the patch version marks compatible ones; a `1.0.0` release is reserv
 deliberately committed-stable API. The minimum supported Rust version (MSRV) is **1.88**
 (see `Cargo.toml` `rust-version`). Optional **`network`** feature: enables the `track`
 `--tle-url` flag (still a stub until HTTP TLE retrieval is implemented). Published on
-[crates.io](https://crates.io/crates/ephemerust) as **`0.3.0`** (pre-1.0 API).
+[crates.io](https://crates.io/crates/ephemerust) as **`0.4.0`** (pre-1.0 API).
 
 ## Changelog
 
@@ -205,16 +205,16 @@ gratitude to everyone who created and maintains them.
 
 ### Tools & libraries (Rust crates)
 
-- `[sgp4](https://crates.io/crates/sgp4)` — SGP4/SDP4 satellite propagation engine; the core
+- [`sgp4`](https://crates.io/crates/sgp4) — SGP4/SDP4 satellite propagation engine; the core
 this project wraps.
-- `[chrono](https://crates.io/crates/chrono)` — date and time handling.
-- `[clap](https://crates.io/crates/clap)` — command-line argument parsing.
-- `[thiserror](https://crates.io/crates/thiserror)` and
-`[anyhow](https://crates.io/crates/anyhow)` — structured error handling.
-- `[log](https://crates.io/crates/log)` and
-`[env_logger](https://crates.io/crates/env_logger)` — logging.
-- `[serde_json](https://crates.io/crates/serde_json)` — JSON serialization for ground-track export.
-- `[criterion](https://crates.io/crates/criterion)` — benchmarking (development dependency).
+- [`chrono`](https://crates.io/crates/chrono) — date and time handling.
+- [`clap`](https://crates.io/crates/clap) — command-line argument parsing.
+- [`thiserror`](https://crates.io/crates/thiserror) and
+[`anyhow`](https://crates.io/crates/anyhow) — structured error handling.
+- [`log`](https://crates.io/crates/log) and
+[`env_logger`](https://crates.io/crates/env_logger) — logging.
+- [`serde_json`](https://crates.io/crates/serde_json) — JSON serialization for ground-track export.
+- [`criterion`](https://crates.io/crates/criterion) — benchmarking (development dependency).
 
 ### Algorithms, theory & data
 

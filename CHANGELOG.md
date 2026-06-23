@@ -12,7 +12,7 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-06-22
+## [0.4.0] - 2026-06-22
 
 First [crates.io](https://crates.io/crates/ephemerust) release: teaching-grade astronomy,
 orbital-mechanics, and satellite-tracking library + `ephemerust` CLI (`cargo add ephemerust`,
@@ -78,7 +78,7 @@ orbital-mechanics, and satellite-tracking library + `ephemerust` CLI (`cargo add
   overview positioning Ephemerust as a teaching-grade wrapper between the `sgp4` engine and
   full mission toolkits, enabled `#![warn(missing_docs)]` to keep the public surface
   documented, and made `cargo clippy --all-targets` and `cargo doc` clean. Doctests grew from
-  6 to 19. Renamed `Planet::from_str` to `Planet::from_name` to avoid confusion with the
+  6 to 20. Renamed `Planet::from_str` to `Planet::from_name` to avoid confusion with the
   `std::str::FromStr` trait.
 - **Educational error handling** — introduced a structured `satellite::TleError` enum whose
   every variant explains *what was expected*, *what was found*, and *the underlying rule* of

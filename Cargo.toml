@@ -1,9 +1,9 @@
 [package]
 name = "ephemerust"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
-authors = ["MichaelHansen"]
+authors = ["Michael Hansen"]
 description = "An accessible, teaching-grade astronomy, orbital-mechanics, and satellite-tracking library and CLI for Rust"
 license = "MIT"
 repository = "https://github.com/IsomorphicAlgo/ephemerust"

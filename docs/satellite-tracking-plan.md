@@ -315,7 +315,7 @@ Prepare the crate for external consumption.
 - Feature flags: **`network`** gates `--tle-url` on the `track` command (stub only until HTTP
   fetch is implemented); MSRV documented in `Cargo.toml` and `readme.md`.
 - Updated `readme.md`, `CHANGELOG.md`, architecture/test-count tables, and this plan
-  (Milestones 8–9 signed off; first crates.io release **0.3.0**).
+  (Milestones 8–9 signed off; first crates.io release **0.4.0**).
 - Example program: `examples/track_subpoint.rs` (`cargo build --examples`).
 
 ### Test plan
@@ -329,7 +329,7 @@ Prepare the crate for external consumption.
 
 API is documented and stable; tooling is clean; a publication decision is recorded.
 **Signed off** (Milestone 9 approved; `network` feature + `examples/track_subpoint`, rustdoc
-MSRV/feature table, `cargo clippy` / `cargo doc` clean; published to crates.io as **0.3.0**
+MSRV/feature table, `cargo clippy` / `cargo doc` clean; published to crates.io as **0.4.0**
 (see [`readme.md`](../readme.md) and [`CHANGELOG.md`](../CHANGELOG.md).)
 
 ---
@@ -398,5 +398,5 @@ M0–M9 scope. They are **not** blockers for the completed satellite-tracking mi
 | **Automated Skyfield / Heavens-Above validation** | M3–M5 test plans | In-tree plausibility + Vallado vectors; manual Astroviewer check in [`readme.md`](../readme.md); optional pinned external regression tests |
 | **M3 subpoint boundary tests** (equator, high inclination, ±180° lon) | M3 test plan | ✅ In-tree (`subpoint_*` tests in `satellite.rs`) |
 | **M2 divergent-orbit error test** | M2 test plan | ✅ In-tree (`propagation_diverges_*` using `sgp4` regression TLEs) |
-| **crates.io publication** | M9 | ✅ **0.3.0** pre-1.0 release |
+| **crates.io publication** | M9 | ✅ **0.4.0** pre-1.0 release |
 | **Precession/nutation, refraction** | Accuracy posture | See [roadmap.md](roadmap.md) Phase 1 remaining work |

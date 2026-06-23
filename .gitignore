@@ -1,4 +1,7 @@
 /target
+/target-alt/
+/target-test2/
+/target-pkg/
 Ephemerust.code-workspace
 
 # Local-only working notes and plans (not part of published docs)

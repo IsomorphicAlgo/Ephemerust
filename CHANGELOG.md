@@ -12,7 +12,27 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-22
+
+First [crates.io](https://crates.io/crates/ephemerust) release: teaching-grade astronomy,
+orbital-mechanics, and satellite-tracking library + `ephemerust` CLI (`cargo add ephemerust`,
+`cargo install ephemerust`).
+
 ### Added
+
+- **`PropagationModel` and `--afspc`** — library functions `propagate_with_model`,
+  `subpoint_with_model`, `look_angles_with_model`, `predict_passes_with_model`, and
+  `ground_track_with_model` accept [`PropagationModel::AfspcCompatibility`] for WGS72 +
+  legacy AFSPC sidereal/epoch (Vallado reference). The `track` command adds `--afspc`; JSON
+  output includes `propagation_model`.
+- **Satellite-tracking plan cleanup** — milestones M0–M9 marked complete; stale “Await sign-off”
+  gates removed; deferred work consolidated under **Future work** in
+  [`docs/satellite-tracking-plan.md`](docs/satellite-tracking-plan.md).
+- **Documentation** — corrected WGS84 default propagation vs optional AFSPC path in the plan,
+  [`docs/accuracy-and-limits.md`](docs/accuracy-and-limits.md), and module rustdoc (replacing
+  the outdated “WGS72 propagator vs WGS84 geodetic” wording).
+- **M2 / M3 regression tests** — `propagation_diverges_*` (official `sgp4` decay/divergence
+  TLEs) and `subpoint_*` boundary tests (equator, polar latitude, ±180° longitude wrap).
 
 - **Library polish (Milestone 9)** — Cargo feature `network` gates the `track --tle-url` CLI
   flag (stub handler unchanged); default integration tests assert clap rejects the flag when
@@ -72,8 +92,7 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
   malformed-TLE path end to end.
 - **crates.io preparation** — completed the package manifest with `documentation`, `readme`,
   and an explicit `rust-version` (MSRV **1.88**, set by the `sgp4` dependency), refined the
-  `description`, and documented the project's `0.x`-until-stable versioning policy. The
-  version remains `0.2.0` (no rollback).
+  `description`, and documented the project's `0.x`-until-stable versioning policy.
 - **Propagation wrapper (Milestone 2)** — `satellite::propagate(tle, time)` wraps the `sgp4`
   engine, converting a UTC datetime to the engine's minutes-since-epoch representation and
   returning the satellite's `TemeState` (TEME-frame position in km and velocity in km/s).

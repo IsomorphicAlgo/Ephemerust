@@ -1,9 +1,8 @@
 # Satellite Tracking & Pass Prediction — Iterative Plan
 
-This document defines the staged, test-driven plan for adding satellite tracking and pass
-prediction to the project. It is written as an engineering plan with explicit stage gates:
-each milestone is independently shippable, ships with its own test plan, and **requires
-explicit sign-off before the next milestone begins**.
+This document records the staged, test-driven plan for satellite tracking and pass prediction.
+**Milestones M0–M9 are complete** (see stage gates below). Remaining items live under
+[Future work](#future-work).
 
 ## Strategy and positioning
 
@@ -33,16 +32,19 @@ The work follows a **library-first** design that serves two reinforcing goals at
   ellipsoid**. Precession and nutation are intentionally omitted at this stage, consistent
   with the project's existing accuracy posture (see
   [accuracy-and-limits.md](accuracy-and-limits.md)).
-- The `sgp4` crate's gravity model is WGS72; geodetic conversion uses the WGS84 ellipsoid.
-  The small resulting inconsistency is within the documented error budget and is noted in
-  the accuracy tables.
+- Production propagation uses the `sgp4` crate's **default (WGS84 + IAU)** path via
+  [`propagate`](../src/satellite.rs); geodetic output uses the **WGS84** ellipsoid — the
+  two are aligned. Optional **AFSPC compatibility** (`--afspc` / [`PropagationModel::AfspcCompatibility`])
+  selects WGS72 + legacy sidereal/epoch handling to match Vallado / legacy NORAD reference
+  implementations (tens-of-metres difference vs the default path). The [`sgp4_teaching`](../src/sgp4_teaching.rs)
+  module still uses WGS-72 μ for pedagogy. Residual subpoint/look-angle error is dominated by
+  TLE age and omitted precession/nutation (see [accuracy-and-limits.md](accuracy-and-limits.md)).
 
 ## How to use this plan
 
-- Milestones are executed in order. Each begins only after the previous milestone's stage
-  gate has been signed off.
+- Milestones were executed in order; each stage gate below records completion status.
 - A milestone is "done" when every item under **Deliverables** exists, every item under
-  **Test plan** passes, and the **Stage gate** criteria are confirmed.
+  **Test plan** passes (or documented substitutes), and the **Stage gate** is marked complete.
 - Each milestone updates the `[Unreleased]` section of [`CHANGELOG.md`](../CHANGELOG.md),
   the status tables in [`readme.md`](../readme.md), and the test counts in
   [`architecture.md`](architecture.md).
@@ -76,8 +78,9 @@ base.
 
 ### Stage gate
 
-Dependency resolves and builds on the target (Windows/PowerShell) environment; the module
-and error plumbing are in place; the smoke test passes. **Await sign-off.**
+Dependency resolves and builds on the target environment; the module and error plumbing are
+in place; the smoke test passes. **Signed off** (Milestone 0 complete; types and `track` are
+fully implemented, not stubs).
 
 ---
 
@@ -106,7 +109,7 @@ Provide robust parsing and validation of element sets from local input.
 ### Stage gate
 
 Valid TLEs parse correctly; invalid TLEs fail with clear errors; reference fields match.
-**Await sign-off.**
+**Signed off** (Milestone 1 complete; network fetch deferred — see [Future work](#future-work)).
 
 ---
 
@@ -130,8 +133,9 @@ Wrap the `sgp4` propagator behind a small, typed, well-documented interface.
 
 ### Stage gate
 
-Propagated states match reference vectors within tolerance; error paths behave as
-documented. **Await sign-off.**
+Propagated states match reference vectors within tolerance (default WGS84 path; optional AFSPC
+mode matches Vallado reference to sub-metre); error paths behave as documented, including
+`sgp4` regression divergence fixtures. **Signed off** (Milestone 2 complete).
 
 ---
 
@@ -160,7 +164,8 @@ Turn inertial states into Earth-fixed positions and sub-satellite ground points.
 ### Stage gate
 
 Round-trip accuracy holds; sub-satellite point matches the external reference within budget.
-**Signed off** (Milestone 3 approved; geodetic round-trip and plausibility tests in-tree).
+**Signed off** (Milestone 3 approved; geodetic round-trip, plausibility, and subpoint boundary
+tests — equator crossing, polar latitude, ±180° longitude wrap — in-tree).
 
 ---
 
@@ -310,7 +315,7 @@ Prepare the crate for external consumption.
 - Feature flags: **`network`** gates `--tle-url` on the `track` command (stub only until HTTP
   fetch is implemented); MSRV documented in `Cargo.toml` and `readme.md`.
 - Updated `readme.md`, `CHANGELOG.md`, architecture/test-count tables, and this plan
-  (Milestones 8–9 signed off; publication to crates.io deferred while on `0.x`).
+  (Milestones 8–9 signed off; first crates.io release **0.3.0**).
 - Example program: `examples/track_subpoint.rs` (`cargo build --examples`).
 
 ### Test plan
@@ -324,8 +329,8 @@ Prepare the crate for external consumption.
 
 API is documented and stable; tooling is clean; a publication decision is recorded.
 **Signed off** (Milestone 9 approved; `network` feature + `examples/track_subpoint`, rustdoc
-MSRV/feature table, `cargo clippy` / `cargo doc` clean; publication to crates.io **deferred**
-while on `0.x` — see [`readme.md`](../readme.md) and [`CHANGELOG.md`](../CHANGELOG.md).)
+MSRV/feature table, `cargo clippy` / `cargo doc` clean; published to crates.io as **0.3.0**
+(see [`readme.md`](../readme.md) and [`CHANGELOG.md`](../CHANGELOG.md).)
 
 ---
 
@@ -358,7 +363,8 @@ authoritative sources; doctests to keep examples correct).
 
 | Quantity | Target tolerance | Dominant error source |
 |----------|------------------|------------------------|
-| Propagated TEME state (vs. verification set) | tight (matches reference engine) | numerical |
+| Propagated TEME state (default WGS84+IAU) | ~tens of m vs Vallado/AFSPC reference | numerical model choice |
+| Propagated TEME state (`--afspc`) | sub-metre vs Vallado verification set | numerical |
 | Sub-satellite point | tens of km | TLE age, omitted precession/nutation |
 | Look-angle azimuth/elevation | a few degrees | TLE age |
 | Pass AOS/LOS time | ~1 minute | search refinement, TLE age |
@@ -377,3 +383,20 @@ cargo test --lib           # unit tests only (fast)
 cargo test --doc           # doctests only
 cargo clippy               # lint
 ```
+
+---
+
+## Future work
+
+Items below were explicitly deferred, partially met with in-tree substitutes, or moved out of
+M0–M9 scope. They are **not** blockers for the completed satellite-tracking milestone set.
+
+| Item | Origin | Status / next step |
+|------|--------|-------------------|
+| **HTTP TLE fetch (`--tle-url`)** | M1 (deferred), M7 deliverable | Stub behind `network` feature; implement per [`http_plan.md`](../http_plan.md) |
+| **Space-Track authenticated fetch** | Out of scope for initial `--tle-url` | Separate compliance/API design if needed |
+| **Automated Skyfield / Heavens-Above validation** | M3–M5 test plans | In-tree plausibility + Vallado vectors; manual Astroviewer check in [`readme.md`](../readme.md); optional pinned external regression tests |
+| **M3 subpoint boundary tests** (equator, high inclination, ±180° lon) | M3 test plan | ✅ In-tree (`subpoint_*` tests in `satellite.rs`) |
+| **M2 divergent-orbit error test** | M2 test plan | ✅ In-tree (`propagation_diverges_*` using `sgp4` regression TLEs) |
+| **crates.io publication** | M9 | ✅ **0.3.0** pre-1.0 release |
+| **Precession/nutation, refraction** | Accuracy posture | See [roadmap.md](roadmap.md) Phase 1 remaining work |

@@ -73,9 +73,8 @@
 //! ```
 
 // Core modules
-pub mod coordinates;
 pub mod celestial;
-pub mod time;
+pub mod coordinates;
 pub mod orbital;
 pub mod planets;
 pub mod satellite;
@@ -84,6 +83,7 @@ pub mod satellite;
 /// This is **not** used by [`satellite::propagate`]; it exists for learning and regression
 /// checks documented in `docs/sgp4.md`.
 pub mod sgp4_teaching;
+pub mod time;
 
 /// Error handling: the crate-wide [`error::AstroError`] type and [`error::Result`] alias.
 pub mod error {
@@ -100,15 +100,15 @@ pub mod error {
         /// A coordinate input was invalid (e.g. NaN, infinite, or out of range).
         #[error("Invalid coordinate: {0}")]
         InvalidCoordinate(String),
-        
+
         /// A time or date input could not be parsed or was out of range.
         #[error("Invalid time: {0}")]
         InvalidTime(String),
-        
+
         /// A numerical calculation failed or could not converge.
         #[error("Calculation error: {0}")]
         CalculationError(String),
-        
+
         /// A structured, educational TLE-parsing failure. The detailed, teaching-oriented
         /// message comes from the wrapped [`crate::satellite::TleError`].
         #[error(transparent)]
@@ -118,7 +118,7 @@ pub mod error {
         /// a TLE-format problem (which uses [`AstroError::Tle`]).
         #[error("Satellite error: {0}")]
         SatelliteError(String),
-        
+
         /// An underlying I/O error (for example, while reading a TLE from a file).
         #[error("IO error: {0}")]
         IoError(#[from] std::io::Error),
@@ -157,9 +157,10 @@ pub use planets::{calculate_planet_position, Planet};
 // Re-export satellite types and propagation / ground-point pipeline
 pub use satellite::{
     ecef_to_geodetic, ground_track, ground_track_to_csv, ground_track_to_json, look_angles,
-    predict_passes, propagate, subpoint, teme_to_ecef, GroundTrackSample, LookAngles, Pass,
-    Subpoint, TemeState, Tle, TleError,
+    look_angles_with_model, predict_passes, predict_passes_with_model, propagate,
+    propagate_with_model, subpoint, subpoint_with_model, teme_to_ecef, GroundTrackSample,
+    LookAngles, Pass, PropagationModel, Subpoint, TemeState, Tle, TleError,
 };
 
 // Re-export time functions
-pub use time::{julian_date, greenwich_mean_sidereal_time, local_sidereal_time};
+pub use time::{greenwich_mean_sidereal_time, julian_date, local_sidereal_time};

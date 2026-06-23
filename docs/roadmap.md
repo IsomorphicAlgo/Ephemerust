@@ -16,6 +16,7 @@ teaching notes plus the `sgp4_teaching` scaffold (`docs/sgp4.md`). The
 
 ### Remaining Phase 1 work
 
+- Satellite tracking follow-ups from [satellite-tracking-plan.md — Future work](satellite-tracking-plan.md#future-work) (HTTP `--tle-url`, external validation tests, etc.).
 - Extend the VSOP87 series with more terms to push accuracy toward the arcsecond level.
 - Optional: a dedicated `planets` subcommand for listing/comparing multiple planets.
 - Longer term: advanced orbital propagation; asteroid/comet positions; stellar positions

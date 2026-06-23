@@ -48,8 +48,9 @@ self-contained.
 - Celestial types: `CelestialObject`, `ObserverLocation`, `RiseSetTimes`
 - Planet types: `Planet`, `calculate_planet_position`
 - Satellite types: `Tle`, `TleError`, `TemeState`, `Subpoint`, `LookAngles`, `Pass`,
-  `GroundTrackSample`; functions `propagate`, `teme_to_ecef`, `ecef_to_geodetic`, `subpoint`,
-  `look_angles`, `predict_passes`, `ground_track`, `ground_track_to_csv`, `ground_track_to_json`
+  `GroundTrackSample`, `PropagationModel`; functions `propagate`, `propagate_with_model`,
+  `teme_to_ecef`, `ecef_to_geodetic`, `subpoint`, `look_angles`, `predict_passes`,
+  `ground_track`, `ground_track_to_csv`, `ground_track_to_json` (and `*_with_model` variants)
 - **Teaching (non-operational):** `sgp4_teaching` — mean motion → **a**, two-body state vs
   `sgp4` for pedagogy (`docs/sgp4.md`)
 - Time functions: `julian_date`, `greenwich_mean_sidereal_time`, `local_sidereal_time`
@@ -128,7 +129,7 @@ Multi-level logging via `log` + `env_logger`; `--verbose` raises the level to de
 
 ## Testing
 
-The suite has **111 unit tests + 8 CLI integration tests + 20 doctests** by default (all
+The suite has **117 unit tests + 8 CLI integration tests + 20 doctests** by default (all
 passing). With `cargo test --features network`, two additional CLI tests exercise the
 `--tle-url` placeholder path (nine integration tests total).
 

@@ -15,9 +15,10 @@
 //!   rotation about the Z axis (reusing [`crate::time`]), followed by **ECEF → geodetic**
 //!   latitude/longitude/altitude on the WGS84 ellipsoid.
 //! - Precession and nutation are intentionally omitted, consistent with the project's
-//!   existing accuracy posture (see `docs/accuracy-and-limits.md`). The propagator's gravity
-//!   model is WGS72 while geodetic conversion uses WGS84; the resulting inconsistency is
-//!   within the documented error budget.
+//!   existing accuracy posture (see `docs/accuracy-and-limits.md`). Production propagation
+//!   uses the `sgp4` crate's default **WGS84 + IAU** model; geodetic conversion uses the
+//!   **WGS84** ellipsoid (aligned). Optional [`PropagationModel::AfspcCompatibility`] selects
+//!   WGS72 + legacy AFSPC sidereal/epoch handling for Vallado reference reproduction.
 //! - Positions are kilometres, velocities kilometres per second, angles degrees, and times
 //!   UTC unless stated otherwise.
 //!
@@ -51,7 +52,7 @@
 //! ```
 
 use crate::celestial::ObserverLocation;
-use crate::coordinates::{Ecef, Eci, eci_to_ecef, ecef_to_geodetic_wgs84, geodetic_wgs84_to_ecef};
+use crate::coordinates::{ecef_to_geodetic_wgs84, eci_to_ecef, geodetic_wgs84_to_ecef, Ecef, Eci};
 use crate::{AstroError, Result};
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use serde::Serialize;
@@ -189,7 +190,9 @@ pub enum TleError {
     },
 
     /// The epoch year and day-of-year did not resolve to a real calendar date.
-    #[error("the epoch does not resolve to a valid calendar date (year {year}, day-of-year {ordinal})")]
+    #[error(
+        "the epoch does not resolve to a valid calendar date (year {year}, day-of-year {ordinal})"
+    )]
     InvalidEpochDate {
         /// Reconstructed four-digit year.
         year: i32,
@@ -386,7 +389,11 @@ impl Tle {
         let catalog_1 = parse_u32(&FieldSpec::new("satellite catalog number", 1, 3, 7), l1)?;
         let catalog_2 = parse_u32(&FieldSpec::new("satellite catalog number", 2, 3, 7), l2)?;
         if catalog_1 != catalog_2 {
-            return Err(TleError::CatalogMismatch { line1: catalog_1, line2: catalog_2 }.into());
+            return Err(TleError::CatalogMismatch {
+                line1: catalog_1,
+                line2: catalog_2,
+            }
+            .into());
         }
 
         let classification = col(l1, 8, 8).chars().next().unwrap_or('U');
@@ -396,24 +403,28 @@ impl Tle {
         let epoch_day = parse_f64_loose(&FieldSpec::new("epoch day-of-year", 1, 21, 32), l1)?;
         let epoch = parse_epoch(epoch_year, epoch_day)?;
 
-        let mean_motion_dot =
-            parse_f64_loose(&FieldSpec::new("first derivative of mean motion", 1, 34, 43), l1)?;
-        let mean_motion_ddot =
-            parse_assumed_exp(&FieldSpec::new("second derivative of mean motion", 1, 45, 52), l1)?;
+        let mean_motion_dot = parse_f64_loose(
+            &FieldSpec::new("first derivative of mean motion", 1, 34, 43),
+            l1,
+        )?;
+        let mean_motion_ddot = parse_assumed_exp(
+            &FieldSpec::new("second derivative of mean motion", 1, 45, 52),
+            l1,
+        )?;
         let bstar = parse_assumed_exp(&FieldSpec::new("B* drag term", 1, 54, 61), l1)?;
-        let element_set_number =
-            parse_u32(&FieldSpec::new("element set number", 1, 65, 68), l1)?;
+        let element_set_number = parse_u32(&FieldSpec::new("element set number", 1, 65, 68), l1)?;
 
         let inclination_deg = parse_f64_loose(&FieldSpec::new("inclination", 2, 9, 16), l2)?;
-        let raan_deg =
-            parse_f64_loose(&FieldSpec::new("right ascension of ascending node", 2, 18, 25), l2)?;
+        let raan_deg = parse_f64_loose(
+            &FieldSpec::new("right ascension of ascending node", 2, 18, 25),
+            l2,
+        )?;
         let eccentricity = parse_eccentricity(&FieldSpec::new("eccentricity", 2, 27, 33), l2)?;
         let arg_perigee_deg =
             parse_f64_loose(&FieldSpec::new("argument of perigee", 2, 35, 42), l2)?;
         let mean_anomaly_deg = parse_f64_loose(&FieldSpec::new("mean anomaly", 2, 44, 51), l2)?;
         let mean_motion = parse_f64_loose(&FieldSpec::new("mean motion", 2, 53, 63), l2)?;
-        let revolution_number =
-            parse_u32(&FieldSpec::new("revolution number", 2, 64, 68), l2)?;
+        let revolution_number = parse_u32(&FieldSpec::new("revolution number", 2, 64, 68), l2)?;
 
         Ok(Tle {
             name: name.map(|s| s.to_string()),
@@ -447,22 +458,35 @@ fn validate_line(line: &str, line_no: u8) -> std::result::Result<&str, TleError>
         return Err(TleError::NonAscii { line: line_no });
     }
     if trimmed.len() < 69 {
-        return Err(TleError::LineTooShort { line: line_no, found: trimmed.len() });
+        return Err(TleError::LineTooShort {
+            line: line_no,
+            found: trimmed.len(),
+        });
     }
     let line = &trimmed[..69];
 
     let actual_number = line.chars().next().unwrap();
     if actual_number != expected_number {
-        return Err(TleError::WrongLineNumber { expected: expected_number, found: actual_number });
+        return Err(TleError::WrongLineNumber {
+            expected: expected_number,
+            found: actual_number,
+        });
     }
 
     let computed = tle_checksum(line);
     let check_text = col(line, 69, 69);
     let stated = check_text
         .parse::<u32>()
-        .map_err(|_| TleError::ChecksumNotDigit { line: line_no, found: check_text.to_string() })?;
+        .map_err(|_| TleError::ChecksumNotDigit {
+            line: line_no,
+            found: check_text.to_string(),
+        })?;
     if computed != stated {
-        return Err(TleError::ChecksumMismatch { line: line_no, computed, stated });
+        return Err(TleError::ChecksumMismatch {
+            line: line_no,
+            computed,
+            stated,
+        });
     }
 
     Ok(line)
@@ -499,7 +523,12 @@ struct FieldSpec {
 
 impl FieldSpec {
     fn new(name: &'static str, line: u8, start: usize, end: usize) -> Self {
-        FieldSpec { name, line, start, end }
+        FieldSpec {
+            name,
+            line,
+            start,
+            end,
+        }
     }
 
     /// Extracts this field's raw text from a validated 69-column line.
@@ -541,9 +570,12 @@ fn parse_f64_loose(spec: &FieldSpec, line: &str) -> std::result::Result<f64, Tle
     } else {
         body.to_string()
     };
-    normalized
-        .parse::<f64>()
-        .map_err(|_| spec.error(s, "expected a decimal number (an implied leading point is allowed, e.g. `-.00002218`)"))
+    normalized.parse::<f64>().map_err(|_| {
+        spec.error(
+            s,
+            "expected a decimal number (an implied leading point is allowed, e.g. `-.00002218`)",
+        )
+    })
 }
 
 /// Parses the TLE "assumed decimal point with exponent" notation (e.g. `-31515-4` →
@@ -559,7 +591,10 @@ fn parse_assumed_exp(spec: &FieldSpec, line: &str) -> std::result::Result<f64, T
         _ => (1.0, s),
     };
     let exp_pos = body.rfind(['+', '-']).ok_or_else(|| {
-        spec.error(s, "missing exponent sign in assumed-decimal notation (e.g. `-31515-4` means -0.31515e-4)")
+        spec.error(
+            s,
+            "missing exponent sign in assumed-decimal notation (e.g. `-31515-4` means -0.31515e-4)",
+        )
     })?;
     let (mantissa_digits, exp_str) = body.split_at(exp_pos);
     if mantissa_digits.is_empty() {
@@ -578,15 +613,21 @@ fn parse_assumed_exp(spec: &FieldSpec, line: &str) -> std::result::Result<f64, T
 /// (e.g. `0001413` → `0.0001413`).
 fn parse_eccentricity(spec: &FieldSpec, line: &str) -> std::result::Result<f64, TleError> {
     let s = spec.text(line).trim();
-    format!("0.{s}")
-        .parse::<f64>()
-        .map_err(|_| spec.error(s, "expected an implied-decimal fraction of digits only (e.g. `0001413` → 0.0001413)"))
+    format!("0.{s}").parse::<f64>().map_err(|_| {
+        spec.error(
+            s,
+            "expected an implied-decimal fraction of digits only (e.g. `0001413` → 0.0001413)",
+        )
+    })
 }
 
 /// Converts a 2-digit TLE epoch year and fractional day-of-year into a UTC datetime.
 ///
 /// Per TLE convention, years 57–99 map to 1957–1999 and 00–56 map to 2000–2056.
-fn parse_epoch(two_digit_year: u32, day_of_year: f64) -> std::result::Result<DateTime<Utc>, TleError> {
+fn parse_epoch(
+    two_digit_year: u32,
+    day_of_year: f64,
+) -> std::result::Result<DateTime<Utc>, TleError> {
     let year = if two_digit_year < 57 {
         2000 + two_digit_year as i32
     } else {
@@ -604,12 +645,28 @@ fn parse_epoch(two_digit_year: u32, day_of_year: f64) -> std::result::Result<Dat
     Ok(Utc.from_utc_datetime(&naive))
 }
 
+/// Which SGP4 constant set and propagate path the [`sgp4`] crate uses.
+///
+/// The default [`PropagationModel::Modern`] path matches the crate's recommended
+/// `Constants::from_elements` / `propagate` (WGS84 geopotential, IAU sidereal time and
+/// epoch). [`PropagationModel::AfspcCompatibility`] selects WGS72 + AFSPC sidereal/epoch
+/// handling to reproduce legacy NORAD / Vallado reference outputs (typically within metres
+/// of the default path for near-Earth orbits).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PropagationModel {
+    /// WGS84 + IAU (`sgp4` crate default). Recommended for general use and WGS84 geodetic output.
+    #[default]
+    Modern,
+    /// WGS72 + AFSPC sidereal/epoch (Vallado / legacy NORAD reference compatibility).
+    #[serde(rename = "afspc")]
+    AfspcCompatibility,
+}
+
 /// Propagates a TLE to the given UTC time and returns the [`TemeState`].
 ///
-/// The orbital elements are re-parsed from the original element-set lines and handed to the
-/// `sgp4` engine, which performs the SGP4/SDP4 propagation. The target time is converted to
-/// the engine's minutes-since-epoch representation; the result is the satellite's position
-/// (km) and velocity (km/s) in the TEME frame of epoch.
+/// Uses [`PropagationModel::Modern`] (WGS84 + IAU). For legacy reference reproduction see
+/// [`propagate_with_model`].
 ///
 /// # Errors
 ///
@@ -638,18 +695,42 @@ fn parse_epoch(two_digit_year: u32, day_of_year: f64) -> std::result::Result<Dat
 /// assert!((6_600.0..=7_100.0).contains(&radius));
 /// ```
 pub fn propagate(tle: &Tle, time: DateTime<Utc>) -> Result<TemeState> {
-    let elements = sgp4::Elements::from_tle(
-        tle.name.clone(),
-        tle.line1.as_bytes(),
-        tle.line2.as_bytes(),
-    )
-    .map_err(|e| {
-        AstroError::SatelliteError(format!("could not parse element set for propagation: {e}"))
-    })?;
+    propagate_with_model(tle, time, PropagationModel::default())
+}
 
-    let constants = sgp4::Constants::from_elements(&elements).map_err(|e| {
-        AstroError::SatelliteError(format!("invalid orbital elements for propagation: {e}"))
-    })?;
+/// Propagates a TLE with an explicit [`PropagationModel`].
+///
+/// The orbital elements are re-parsed from the original element-set lines and handed to the
+/// `sgp4` engine, which performs the SGP4/SDP4 propagation. The target time is converted to
+/// the engine's minutes-since-epoch representation; the result is the satellite's position
+/// (km) and velocity (km/s) in the TEME frame of epoch.
+pub fn propagate_with_model(
+    tle: &Tle,
+    time: DateTime<Utc>,
+    model: PropagationModel,
+) -> Result<TemeState> {
+    let elements =
+        sgp4::Elements::from_tle(tle.name.clone(), tle.line1.as_bytes(), tle.line2.as_bytes())
+            .map_err(|e| {
+                AstroError::SatelliteError(format!(
+                    "could not parse element set for propagation: {e}"
+                ))
+            })?;
+
+    let constants = match model {
+        PropagationModel::Modern => {
+            sgp4::Constants::from_elements(&elements).map_err(|e| {
+                AstroError::SatelliteError(format!("invalid orbital elements for propagation: {e}"))
+            })?
+        }
+        PropagationModel::AfspcCompatibility => {
+            sgp4::Constants::from_elements_afspc_compatibility_mode(&elements).map_err(|e| {
+                AstroError::SatelliteError(format!(
+                    "invalid orbital elements for AFSPC propagation: {e}"
+                ))
+            })?
+        }
+    };
 
     let minutes = elements
         .datetime_to_minutes_since_epoch(&time.naive_utc())
@@ -659,9 +740,13 @@ pub fn propagate(tle: &Tle, time: DateTime<Utc>) -> Result<TemeState> {
             ))
         })?;
 
-    let prediction = constants.propagate(minutes).map_err(|e| {
-        AstroError::SatelliteError(format!("SGP4 propagation diverged: {e}"))
-    })?;
+    let prediction = match model {
+        PropagationModel::Modern => constants.propagate(minutes),
+        PropagationModel::AfspcCompatibility => {
+            constants.propagate_afspc_compatibility_mode(minutes)
+        }
+    }
+    .map_err(|e| AstroError::SatelliteError(format!("SGP4 propagation diverged: {e}")))?;
 
     Ok(TemeState {
         position_km: prediction.position,
@@ -709,7 +794,16 @@ pub fn ecef_to_geodetic(ecef: Ecef) -> Result<Subpoint> {
 ///
 /// This is equivalent to [`propagate`] followed by [`teme_to_ecef`] and [`ecef_to_geodetic`].
 pub fn subpoint(tle: &Tle, time: DateTime<Utc>) -> Result<Subpoint> {
-    let state = propagate(tle, time)?;
+    subpoint_with_model(tle, time, PropagationModel::default())
+}
+
+/// Like [`subpoint`] with an explicit [`PropagationModel`].
+pub fn subpoint_with_model(
+    tle: &Tle,
+    time: DateTime<Utc>,
+    model: PropagationModel,
+) -> Result<Subpoint> {
+    let state = propagate_with_model(tle, time, model)?;
     let ecef = teme_to_ecef(&state, time)?;
     ecef_to_geodetic(ecef)
 }
@@ -730,6 +824,23 @@ pub fn ground_track(
     window_end: DateTime<Utc>,
     step: Duration,
 ) -> Result<Vec<GroundTrackSample>> {
+    ground_track_with_model(
+        tle,
+        window_start,
+        window_end,
+        step,
+        PropagationModel::default(),
+    )
+}
+
+/// Like [`ground_track`] with an explicit [`PropagationModel`].
+pub fn ground_track_with_model(
+    tle: &Tle,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    step: Duration,
+    model: PropagationModel,
+) -> Result<Vec<GroundTrackSample>> {
     if step <= Duration::zero() {
         return Err(AstroError::SatelliteError(
             "ground_track step must be strictly positive".into(),
@@ -749,7 +860,7 @@ pub fn ground_track(
 
     let mut t = window_start;
     while t < window_end {
-        let s = subpoint(tle, t)?;
+        let s = subpoint_with_model(tle, t, model)?;
         out.push(GroundTrackSample {
             time: t,
             subpoint: s,
@@ -771,7 +882,8 @@ pub fn ground_track_to_csv(samples: &[GroundTrackSample]) -> String {
         let _ = writeln!(
             &mut buf,
             "{},{:.9},{:.9},{:.6}",
-            row.time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            row.time
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             row.subpoint.latitude_deg,
             row.subpoint.longitude_deg,
             row.subpoint.altitude_km
@@ -782,9 +894,8 @@ pub fn ground_track_to_csv(samples: &[GroundTrackSample]) -> String {
 
 /// Serializes ground-track samples as a **JSON** array (pretty-printed).
 pub fn ground_track_to_json(samples: &[GroundTrackSample]) -> Result<String> {
-    serde_json::to_string_pretty(samples).map_err(|e| {
-        AstroError::SatelliteError(format!("JSON serialization failed: {e}"))
-    })
+    serde_json::to_string_pretty(samples)
+        .map_err(|e| AstroError::SatelliteError(format!("JSON serialization failed: {e}")))
 }
 
 /// Earth rotation rate about ECEF +Z (rad/s), conventional sidereal value used with GMST.
@@ -798,7 +909,11 @@ fn omega_cross_r_ecef(r: &Ecef) -> [f64; 3] {
 
 /// TEME velocity to ECEF velocity (m/s), including the transport term **ω** × **r** for the
 /// rotating Earth-fixed frame (Vallado-style bridge used with SGP4/TEME pipelines).
-fn teme_velocity_to_ecef_m_s(state: &TemeState, time: DateTime<Utc>, r_ecef: &Ecef) -> Result<[f64; 3]> {
+fn teme_velocity_to_ecef_m_s(
+    state: &TemeState,
+    time: DateTime<Utc>,
+    r_ecef: &Ecef,
+) -> Result<[f64; 3]> {
     let jd = crate::time::julian_date(time);
     let gmst = crate::time::greenwich_mean_sidereal_time(jd);
     let v_eci = Eci {
@@ -872,8 +987,22 @@ fn ecef_delta_to_enu(
 /// assert!(la.range_km > 50.0 && la.range_km < 20_000.0);
 /// assert!((0.0..360.0).contains(&la.azimuth_deg));
 /// ```
-pub fn look_angles(tle: &Tle, time: DateTime<Utc>, observer: ObserverLocation) -> Result<LookAngles> {
-    let state = propagate(tle, time)?;
+pub fn look_angles(
+    tle: &Tle,
+    time: DateTime<Utc>,
+    observer: ObserverLocation,
+) -> Result<LookAngles> {
+    look_angles_with_model(tle, time, observer, PropagationModel::default())
+}
+
+/// Like [`look_angles`] with an explicit [`PropagationModel`].
+pub fn look_angles_with_model(
+    tle: &Tle,
+    time: DateTime<Utc>,
+    observer: ObserverLocation,
+    model: PropagationModel,
+) -> Result<LookAngles> {
+    let state = propagate_with_model(tle, time, model)?;
     let r_sat = teme_to_ecef(&state, time)?;
     let r_obs = geodetic_wgs84_to_ecef(observer.latitude, observer.longitude, observer.elevation)?;
 
@@ -926,8 +1055,13 @@ fn coarse_step_for_mean_motion(mean_motion_rev_per_day: f64) -> Duration {
     Duration::seconds(step_s as i64)
 }
 
-fn elevation_deg(tle: &Tle, t: DateTime<Utc>, observer: ObserverLocation) -> Result<f64> {
-    Ok(look_angles(tle, t, observer)?.elevation_deg)
+fn elevation_deg(
+    tle: &Tle,
+    t: DateTime<Utc>,
+    observer: ObserverLocation,
+    model: PropagationModel,
+) -> Result<f64> {
+    Ok(look_angles_with_model(tle, t, observer, model)?.elevation_deg)
 }
 
 /// Heuristic: near-geosynchronous element sets (≈1 rev/day, equatorial) use a simplified
@@ -945,20 +1079,22 @@ fn predict_passes_geo(
     window_start: DateTime<Utc>,
     window_end: DateTime<Utc>,
     min_elevation_deg: f64,
+    model: PropagationModel,
 ) -> Result<Vec<Pass>> {
     if window_end <= window_start {
         return Ok(Vec::new());
     }
     let mid = window_start + (window_end - window_start) / 2;
-    let el_start = elevation_deg(tle, window_start, observer)?;
-    let el_mid = elevation_deg(tle, mid, observer)?;
-    let el_end = elevation_deg(tle, window_end - Duration::milliseconds(1), observer)?;
-    let above = el_start >= min_elevation_deg && el_mid >= min_elevation_deg && el_end >= min_elevation_deg;
+    let el_start = elevation_deg(tle, window_start, observer, model)?;
+    let el_mid = elevation_deg(tle, mid, observer, model)?;
+    let el_end = elevation_deg(tle, window_end - Duration::milliseconds(1), observer, model)?;
+    let above =
+        el_start >= min_elevation_deg && el_mid >= min_elevation_deg && el_end >= min_elevation_deg;
     if !above {
         return Ok(Vec::new());
     }
-    let la_a = look_angles(tle, window_start, observer)?;
-    let la_b = look_angles(tle, window_end - Duration::milliseconds(1), observer)?;
+    let la_a = look_angles_with_model(tle, window_start, observer, model)?;
+    let la_b = look_angles_with_model(tle, window_end - Duration::milliseconds(1), observer, model)?;
     Ok(vec![Pass {
         aos: window_start,
         culmination: mid,
@@ -976,13 +1112,14 @@ fn bisect_elevation_rising(
     mask: f64,
     mut lo: DateTime<Utc>,
     mut hi: DateTime<Utc>,
+    model: PropagationModel,
 ) -> Result<DateTime<Utc>> {
     for _ in 0..56 {
         if hi.signed_duration_since(lo) <= Duration::milliseconds(1) {
             break;
         }
         let mid = lo + (hi - lo) / 2;
-        let el = elevation_deg(tle, mid, observer)?;
+        let el = elevation_deg(tle, mid, observer, model)?;
         if el >= mask {
             hi = mid;
         } else {
@@ -999,13 +1136,14 @@ fn bisect_elevation_falling(
     mask: f64,
     mut lo: DateTime<Utc>,
     mut hi: DateTime<Utc>,
+    model: PropagationModel,
 ) -> Result<DateTime<Utc>> {
     for _ in 0..56 {
         if hi.signed_duration_since(lo) <= Duration::milliseconds(1) {
             break;
         }
         let mid = lo + (hi - lo) / 2;
-        let el = elevation_deg(tle, mid, observer)?;
+        let el = elevation_deg(tle, mid, observer, model)?;
         if el < mask {
             hi = mid;
         } else {
@@ -1021,11 +1159,12 @@ fn culmination_time_and_max_el(
     observer: ObserverLocation,
     aos: DateTime<Utc>,
     los: DateTime<Utc>,
+    model: PropagationModel,
 ) -> Result<(DateTime<Utc>, f64)> {
     let mut lo = aos;
     let mut hi = los;
     if hi <= lo {
-        let el = elevation_deg(tle, lo, observer)?;
+        let el = elevation_deg(tle, lo, observer, model)?;
         return Ok((lo, el));
     }
     for _ in 0..48 {
@@ -1035,8 +1174,8 @@ fn culmination_time_and_max_el(
         let third = (hi - lo) / 3;
         let m1 = lo + third;
         let m2 = hi - third;
-        let e1 = elevation_deg(tle, m1, observer)?;
-        let e2 = elevation_deg(tle, m2, observer)?;
+        let e1 = elevation_deg(tle, m1, observer, model)?;
+        let e2 = elevation_deg(tle, m2, observer, model)?;
         if e1 > e2 {
             hi = m2;
         } else {
@@ -1044,7 +1183,7 @@ fn culmination_time_and_max_el(
         }
     }
     let t_peak = lo + (hi - lo) / 2;
-    let max_el = elevation_deg(tle, t_peak, observer)?;
+    let max_el = elevation_deg(tle, t_peak, observer, model)?;
     Ok((t_peak, max_el))
 }
 
@@ -1067,18 +1206,44 @@ pub fn predict_passes(
     window_end: DateTime<Utc>,
     min_elevation_deg: f64,
 ) -> Result<Vec<Pass>> {
+    predict_passes_with_model(
+        tle,
+        observer,
+        window_start,
+        window_end,
+        min_elevation_deg,
+        PropagationModel::default(),
+    )
+}
+
+/// Like [`predict_passes`] with an explicit [`PropagationModel`].
+pub fn predict_passes_with_model(
+    tle: &Tle,
+    observer: ObserverLocation,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    min_elevation_deg: f64,
+    model: PropagationModel,
+) -> Result<Vec<Pass>> {
     if window_end <= window_start {
         return Ok(Vec::new());
     }
     if is_geo_heuristic(tle) {
-        return predict_passes_geo(tle, observer, window_start, window_end, min_elevation_deg);
+        return predict_passes_geo(
+            tle,
+            observer,
+            window_start,
+            window_end,
+            min_elevation_deg,
+            model,
+        );
     }
 
     let dt = coarse_step_for_mean_motion(tle.mean_motion);
     let mut passes = Vec::new();
 
     let mut prev_t = window_start;
-    let mut prev_el = elevation_deg(tle, prev_t, observer)?;
+    let mut prev_el = elevation_deg(tle, prev_t, observer, model)?;
     let mut pending_aos: Option<DateTime<Utc>> = if prev_el >= min_elevation_deg {
         Some(window_start)
     } else {
@@ -1087,18 +1252,19 @@ pub fn predict_passes(
 
     let mut t = window_start + dt;
     while t < window_end {
-        let el = elevation_deg(tle, t, observer)?;
+        let el = elevation_deg(tle, t, observer, model)?;
 
         if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
-            let aos = bisect_elevation_rising(tle, observer, min_elevation_deg, prev_t, t)?;
+            let aos = bisect_elevation_rising(tle, observer, min_elevation_deg, prev_t, t, model)?;
             pending_aos = Some(aos);
         } else if pending_aos.is_some() && prev_el >= min_elevation_deg && el < min_elevation_deg {
             let aos = pending_aos.take().expect("aos");
-            let los = bisect_elevation_falling(tle, observer, min_elevation_deg, prev_t, t)?;
+            let los = bisect_elevation_falling(tle, observer, min_elevation_deg, prev_t, t, model)?;
             if los > aos {
-                let (culm, max_el) = culmination_time_and_max_el(tle, observer, aos, los)?;
-                let la_aos = look_angles(tle, aos, observer)?;
-                let la_los = look_angles(tle, los, observer)?;
+                let (culm, max_el) =
+                    culmination_time_and_max_el(tle, observer, aos, los, model)?;
+                let la_aos = look_angles_with_model(tle, aos, observer, model)?;
+                let la_los = look_angles_with_model(tle, los, observer, model)?;
                 passes.push(Pass {
                     aos,
                     culmination: culm,
@@ -1118,27 +1284,37 @@ pub fn predict_passes(
     // Final segment up to exclusive window end.
     let last_t = (window_end - Duration::milliseconds(1)).max(window_start);
     if last_t > prev_t {
-        let el = elevation_deg(tle, last_t, observer)?;
-        let opened_in_tail = if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
-            pending_aos = Some(bisect_elevation_rising(
-                tle,
-                observer,
-                min_elevation_deg,
-                prev_t,
-                last_t,
-            )?);
-            true
-        } else {
-            false
-        };
+        let el = elevation_deg(tle, last_t, observer, model)?;
+        let opened_in_tail =
+            if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
+                pending_aos = Some(bisect_elevation_rising(
+                    tle,
+                    observer,
+                    min_elevation_deg,
+                    prev_t,
+                    last_t,
+                    model,
+                )?);
+                true
+            } else {
+                false
+            };
 
         if let Some(aos) = pending_aos {
             if !opened_in_tail && prev_el >= min_elevation_deg && el < min_elevation_deg {
-                let los = bisect_elevation_falling(tle, observer, min_elevation_deg, prev_t, last_t)?;
+                let los = bisect_elevation_falling(
+                    tle,
+                    observer,
+                    min_elevation_deg,
+                    prev_t,
+                    last_t,
+                    model,
+                )?;
                 if los > aos {
-                    let (culm, max_el) = culmination_time_and_max_el(tle, observer, aos, los)?;
-                    let la_aos = look_angles(tle, aos, observer)?;
-                    let la_los = look_angles(tle, los, observer)?;
+                    let (culm, max_el) =
+                        culmination_time_and_max_el(tle, observer, aos, los, model)?;
+                    let la_aos = look_angles_with_model(tle, aos, observer, model)?;
+                    let la_los = look_angles_with_model(tle, los, observer, model)?;
                     passes.push(Pass {
                         aos,
                         culmination: culm,
@@ -1152,9 +1328,9 @@ pub fn predict_passes(
                 let los = window_end;
                 let los_sample = last_t;
                 let (culm, max_el) =
-                    culmination_time_and_max_el(tle, observer, aos, los_sample)?;
-                let la_aos = look_angles(tle, aos, observer)?;
-                let la_los = look_angles(tle, los_sample, observer)?;
+                    culmination_time_and_max_el(tle, observer, aos, los_sample, model)?;
+                let la_aos = look_angles_with_model(tle, aos, observer, model)?;
+                let la_los = look_angles_with_model(tle, los_sample, observer, model)?;
                 passes.push(Pass {
                     aos,
                     culmination: culm,
@@ -1174,15 +1350,13 @@ pub fn predict_passes(
 mod tests {
     use super::*;
     use crate::celestial::ObserverLocation;
-    use chrono::{Datelike, Duration, TimeZone, Timelike};
     use crate::coordinates::ecef_to_eci;
+    use chrono::{Datelike, Duration, TimeZone, Timelike};
 
     // Canonical ISS (ZARYA) element set, reused as a fixed reference across the suite.
     const ISS_NAME: &str = "ISS (ZARYA)";
-    const ISS_LINE1: &str =
-        "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992";
-    const ISS_LINE2: &str =
-        "2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008";
+    const ISS_LINE1: &str = "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992";
+    const ISS_LINE2: &str = "2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008";
 
     // A second, older ISS element set (from the sgp4 crate documentation) for cross-checks.
     const ISS_2008_LINE1: &str =
@@ -1231,7 +1405,8 @@ mod tests {
 
     #[test]
     fn parses_two_line_set_without_name() {
-        let tle = Tle::parse(&format!("{ISS_LINE1}\n{ISS_LINE2}")).expect("2-line set should parse");
+        let tle =
+            Tle::parse(&format!("{ISS_LINE1}\n{ISS_LINE2}")).expect("2-line set should parse");
         assert!(tle.name.is_none());
         assert_eq!(tle.catalog_number, 25544);
     }
@@ -1250,19 +1425,28 @@ mod tests {
         let err = Tle::from_lines(Some(ISS_NAME), &bad_line1, ISS_LINE2)
             .expect_err("corrupted checksum must be rejected");
         assert!(
-            matches!(err, AstroError::Tle(TleError::ChecksumMismatch { line: 1, .. })),
+            matches!(
+                err,
+                AstroError::Tle(TleError::ChecksumMismatch { line: 1, .. })
+            ),
             "unexpected error: {err:?}"
         );
         // The message must teach the rule, not merely report a mismatch.
         let msg = err.to_string();
-        assert!(msg.contains("modulo-10"), "missing the checksum rule: {msg}");
+        assert!(
+            msg.contains("modulo-10"),
+            "missing the checksum rule: {msg}"
+        );
         assert!(err.hint().is_some(), "checksum errors should carry a hint");
     }
 
     #[test]
     fn rejects_wrong_line_count() {
         let err = Tle::parse(ISS_LINE1).expect_err("single line must be rejected");
-        assert!(matches!(err, AstroError::Tle(TleError::WrongLineCount { found: 1 })));
+        assert!(matches!(
+            err,
+            AstroError::Tle(TleError::WrongLineCount { found: 1 })
+        ));
         assert!(err.to_string().contains("2-line or 3-line"));
     }
 
@@ -1270,11 +1454,20 @@ mod tests {
     fn rejects_short_line() {
         let err = Tle::from_lines(None, "1 25544U", ISS_LINE2)
             .expect_err("truncated line must be rejected");
-        assert!(matches!(err, AstroError::Tle(TleError::LineTooShort { line: 1, .. })));
+        assert!(matches!(
+            err,
+            AstroError::Tle(TleError::LineTooShort { line: 1, .. })
+        ));
         // The message must state both the requirement and the underlying fixed-column rule.
         let msg = err.to_string();
-        assert!(msg.contains("69 are required"), "missing the column requirement: {msg}");
-        assert!(msg.contains("fixed-column"), "missing the fixed-column rule: {msg}");
+        assert!(
+            msg.contains("69 are required"),
+            "missing the column requirement: {msg}"
+        );
+        assert!(
+            msg.contains("fixed-column"),
+            "missing the fixed-column rule: {msg}"
+        );
     }
 
     #[test]
@@ -1284,7 +1477,10 @@ mod tests {
             .expect_err("misordered lines must be rejected");
         assert!(matches!(
             err,
-            AstroError::Tle(TleError::WrongLineNumber { expected: '1', found: '2' })
+            AstroError::Tle(TleError::WrongLineNumber {
+                expected: '1',
+                found: '2'
+            })
         ));
         assert!(err.to_string().contains("begin with '1'"));
     }
@@ -1335,7 +1531,10 @@ mod tests {
             // Epochs should agree to within a millisecond.
             let delta = tle.epoch.naive_utc() - elements.datetime;
             assert!(
-                delta.num_microseconds().map(|us| us.abs() < 1_000).unwrap_or(false),
+                delta
+                    .num_microseconds()
+                    .map(|us| us.abs() < 1_000)
+                    .unwrap_or(false),
                 "epoch mismatch: {} vs {}",
                 tle.epoch.naive_utc(),
                 elements.datetime
@@ -1374,6 +1573,21 @@ mod tests {
     }
 
     #[test]
+    fn propagate_afspc_wrapper_matches_reference_at_epoch() {
+        let tle = Tle::from_lines(None, SAT5_LINE1, SAT5_LINE2).unwrap();
+        let state = propagate_with_model(&tle, tle.epoch, PropagationModel::AfspcCompatibility)
+            .expect("AFSPC propagation at epoch succeeds");
+        let expected_r = [7022.46529266, -1400.08296755, 0.03995155];
+        for (i, expected) in expected_r.iter().enumerate() {
+            assert!(
+                (state.position_km[i] - expected).abs() < 1e-3,
+                "AFSPC position[{i}]: {} vs reference {expected}",
+                state.position_km[i]
+            );
+        }
+    }
+
+    #[test]
     fn afspc_mode_reproduces_reference_to_sub_metre() {
         // Confirms the ~tens-of-metres gap in `propagates_sat5_epoch_to_reference_teme_state`
         // is purely the WGS84/IAU-vs-WGS72/AFSPC model choice: in AFSPC mode the engine
@@ -1386,8 +1600,11 @@ mod tests {
             .unwrap();
 
         let expected_r = [7022.46529266, -1400.08296755, 0.03995155];
-        for (axis, (actual, expected)) in
-            prediction.position.iter().zip(expected_r.iter()).enumerate()
+        for (axis, (actual, expected)) in prediction
+            .position
+            .iter()
+            .zip(expected_r.iter())
+            .enumerate()
         {
             assert!(
                 (actual - expected).abs() < 1e-3,
@@ -1431,7 +1648,41 @@ mod tests {
         // ~400 years past epoch overflows the engine's minutes-since-epoch representation.
         let far_future = tle.epoch + chrono::Duration::days(365 * 400);
         let err = propagate(&tle, far_future).expect_err("an unrepresentable time must error");
-        assert!(matches!(err, AstroError::SatelliteError(_)), "unexpected error: {err}");
+        assert!(
+            matches!(err, AstroError::SatelliteError(_)),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn propagation_diverges_at_epoch_for_degenerate_element_set() {
+        // From the `sgp4` crate's official regression set: perturbed eccentricity diverges at t = 0.
+        let tle = Tle::from_lines(None, DIVERGE_AT_EPOCH_L1, DIVERGE_AT_EPOCH_L2).unwrap();
+        let err = propagate(&tle, tle.epoch).expect_err("epoch propagation must diverge");
+        assert!(
+            matches!(err, AstroError::SatelliteError(_)),
+            "unexpected error: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("diverged"),
+            "expected SGP4 divergence message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn propagation_diverges_after_drag_decay_fixture() {
+        // Same regression corpus: negative semi-latus rectum 25 minutes after epoch.
+        let tle = Tle::from_lines(None, DIVERGE_25MIN_L1, DIVERGE_25MIN_L2).unwrap();
+        let t = tle.epoch + Duration::minutes(25);
+        let err = propagate(&tle, t).expect_err("propagation must diverge after decay");
+        assert!(
+            matches!(err, AstroError::SatelliteError(_)),
+            "unexpected error: {err:?}"
+        );
+        assert!(err.to_string().contains("diverged"));
+        // Epoch itself is still valid for this element set.
+        propagate(&tle, tle.epoch).expect("propagation at epoch should succeed for this TLE");
     }
 
     #[test]
@@ -1461,9 +1712,50 @@ mod tests {
     fn subpoint_iss_epoch_is_plausible_leo() {
         let tle = Tle::parse(&iss_3line()).expect("ISS TLE parses");
         let p = subpoint(&tle, tle.epoch).expect("subpoint at epoch succeeds");
-        assert!(p.altitude_km > 200.0 && p.altitude_km < 500.0, "altitude {} km", p.altitude_km);
+        assert!(
+            p.altitude_km > 200.0 && p.altitude_km < 500.0,
+            "altitude {} km",
+            p.altitude_km
+        );
         assert!(p.latitude_deg.abs() < 55.0, "latitude {}°", p.latitude_deg);
         assert!(p.longitude_deg.abs() <= 180.0);
+    }
+
+    #[test]
+    fn subpoint_iss_crosses_equator_within_one_orbit() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let start = tle.epoch;
+        let end = start + orbit_period(&tle);
+        let min_abs_lat = min_abs_subpoint_latitude_deg(&tle, start, end, Duration::seconds(30));
+        assert!(
+            min_abs_lat < 1.0,
+            "ISS should cross the equator within one orbit; min |lat| = {min_abs_lat}°"
+        );
+    }
+
+    #[test]
+    fn subpoint_high_inclination_reaches_polar_latitudes() {
+        // Near-polar element set (i ≈ 96.5°) from the `sgp4` regression corpus.
+        let tle = Tle::from_lines(None, DIVERGE_25MIN_L1, DIVERGE_25MIN_L2).unwrap();
+        let start = tle.epoch;
+        let end = start + orbit_period(&tle);
+        let max_abs_lat = max_abs_subpoint_latitude_deg(&tle, start, end, Duration::seconds(30));
+        assert!(
+            max_abs_lat > 85.0,
+            "96° inclination should reach polar latitudes; max |lat| = {max_abs_lat}°"
+        );
+    }
+
+    #[test]
+    fn subpoint_longitude_stays_in_range_and_crosses_antimeridian() {
+        let tle = Tle::parse(&iss_3line()).unwrap();
+        let start = tle.epoch;
+        // Two orbits: ISS ground track crosses the ±180° meridian routinely.
+        let end = start + orbit_period(&tle) * 2;
+        assert!(
+            subpoint_track_crosses_antimeridian(&tle, start, end, Duration::seconds(45)),
+            "expected a ±180° longitude wrap on the ISS ground track within two orbits"
+        );
     }
 
     #[test]
@@ -1569,7 +1861,13 @@ mod tests {
         let start = tle.epoch;
         let v = ground_track(&tle, start, start, Duration::seconds(60)).unwrap();
         assert!(v.is_empty());
-        let v2 = ground_track(&tle, start, start - Duration::hours(1), Duration::seconds(60)).unwrap();
+        let v2 = ground_track(
+            &tle,
+            start,
+            start - Duration::hours(1),
+            Duration::seconds(60),
+        )
+        .unwrap();
         assert!(v2.is_empty());
     }
 
@@ -1584,6 +1882,87 @@ mod tests {
         assert_eq!(v.len(), 6);
         assert_eq!(v[0].time, start);
         assert_eq!(v.last().unwrap().time, start + Duration::minutes(50));
+    }
+
+    // Vallado / sgp4 crate regression TLEs that must fail propagation (not merely parse).
+    const DIVERGE_AT_EPOCH_L1: &str =
+        "1 33334U 78066F   06174.85818871  .00000620  00000-0  10000-3 0  6806";
+    const DIVERGE_AT_EPOCH_L2: &str =
+        "2 33334  68.4714 236.1303 5602877 123.7484 302.5767  0.00001000 67521";
+    const DIVERGE_25MIN_L1: &str =
+        "1 33333U 05037B   05333.02012661  .25992681  00000-0  24476-3 0  1532";
+    const DIVERGE_25MIN_L2: &str =
+        "2 33333  96.4736 157.9986 9950000 244.0492 110.6523  4.00004038 10700";
+
+    fn orbit_period(tle: &Tle) -> Duration {
+        let period_s = 86400.0 / tle.mean_motion;
+        Duration::milliseconds((period_s * 1000.0).round() as i64)
+    }
+
+    /// Minimum |latitude| reached by [`subpoint`] samples in `[start, end)` every `step`.
+    fn min_abs_subpoint_latitude_deg(
+        tle: &Tle,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        step: Duration,
+    ) -> f64 {
+        let mut min = f64::INFINITY;
+        let mut t = start;
+        while t < end {
+            if let Ok(p) = subpoint(tle, t) {
+                min = min.min(p.latitude_deg.abs());
+            }
+            t += step;
+        }
+        min
+    }
+
+    /// Maximum |latitude| reached by [`subpoint`] samples in `[start, end)` every `step`.
+    fn max_abs_subpoint_latitude_deg(
+        tle: &Tle,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        step: Duration,
+    ) -> f64 {
+        let mut max = 0.0_f64;
+        let mut t = start;
+        while t < end {
+            if let Ok(p) = subpoint(tle, t) {
+                max = max.max(p.latitude_deg.abs());
+            }
+            t += step;
+        }
+        max
+    }
+
+    /// True if consecutive samples show a raw longitude jump > 300° (±180° wrap) with both
+    /// endpoints still in [-180°, 180°].
+    fn subpoint_track_crosses_antimeridian(
+        tle: &Tle,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        step: Duration,
+    ) -> bool {
+        let mut prev: Option<Subpoint> = None;
+        let mut t = start;
+        while t < end {
+            if let Ok(p) = subpoint(tle, t) {
+                assert!(
+                    p.longitude_deg >= -180.0 && p.longitude_deg <= 180.0,
+                    "longitude out of range: {}",
+                    p.longitude_deg
+                );
+                if let Some(p0) = prev {
+                    let raw_jump = (p.longitude_deg - p0.longitude_deg).abs();
+                    if raw_jump > 300.0 {
+                        return true;
+                    }
+                }
+                prev = Some(p);
+            }
+            t += step;
+        }
+        false
     }
 
     fn lon_unwrapped_delta_deg(prev_lon: f64, next_lon: f64) -> f64 {
@@ -1625,7 +2004,9 @@ mod tests {
         assert!(v.len() >= 2);
         let mut max_dlon = 0.0_f64;
         for w in v.windows(2) {
-            let d = lon_unwrapped_delta_deg(w[0].subpoint.longitude_deg, w[1].subpoint.longitude_deg).abs();
+            let d =
+                lon_unwrapped_delta_deg(w[0].subpoint.longitude_deg, w[1].subpoint.longitude_deg)
+                    .abs();
             max_dlon = max_dlon.max(d);
         }
         assert!(
@@ -1677,11 +2058,14 @@ mod tests {
             !passes.is_empty(),
             "expected at least one pass over 72 h for ISS / Everett"
         );
-        let p = passes.iter().max_by(|x, y| {
-            x.max_elevation_deg
-                .partial_cmp(&y.max_elevation_deg)
-                .unwrap()
-        }).unwrap();
+        let p = passes
+            .iter()
+            .max_by(|x, y| {
+                x.max_elevation_deg
+                    .partial_cmp(&y.max_elevation_deg)
+                    .unwrap()
+            })
+            .unwrap();
         assert!(p.max_elevation_deg > 12.0, "max el {}", p.max_elevation_deg);
         assert!(p.aos <= p.culmination && p.culmination <= p.los);
         assert!(p.aos >= start && p.los <= end);
@@ -1700,7 +2084,10 @@ mod tests {
         let start = tle.epoch;
         let end = start + Duration::hours(6);
         let passes = predict_passes(&tle, obs, start, end, 89.0).unwrap();
-        assert!(passes.is_empty(), "ISS should not reach 89° from deep south pole in 6 h");
+        assert!(
+            passes.is_empty(),
+            "ISS should not reach 89° from deep south pole in 6 h"
+        );
     }
 
     #[test]

@@ -91,7 +91,10 @@ pub fn orbital_elements_from_sgp4_elements(elements: &sgp4::Elements) -> Orbital
 ///
 /// Returns [`AstroError::SatelliteError`] if [`teaching_supported`] is false, or if
 /// [`elements_to_state_vector`] rejects the constructed elements.
-pub fn teaching_two_body_state(elements: &sgp4::Elements, minutes_since_epoch: f64) -> Result<StateVector> {
+pub fn teaching_two_body_state(
+    elements: &sgp4::Elements,
+    minutes_since_epoch: f64,
+) -> Result<StateVector> {
     if !teaching_supported(elements) {
         return Err(AstroError::SatelliteError(
             "sgp4_teaching: element set outside the supported near-Earth mean-motion band; \
@@ -122,16 +125,20 @@ pub fn teaching_two_body_state(elements: &sgp4::Elements, minutes_since_epoch: f
 
 /// Euclidean norm ‖**r**_teach − **r**_prod‖ in kilometres, where **r**_prod comes from the
 /// `sgp4` crate’s [`sgp4::Constants::propagate`].
-pub fn position_delta_norm_km_vs_sgp4(elements: &sgp4::Elements, minutes_since_epoch: f64) -> Result<f64> {
+pub fn position_delta_norm_km_vs_sgp4(
+    elements: &sgp4::Elements,
+    minutes_since_epoch: f64,
+) -> Result<f64> {
     let teach = teaching_two_body_state(elements, minutes_since_epoch)?;
-    let constants = sgp4::Constants::from_elements(elements).map_err(|e| {
-        AstroError::SatelliteError(format!("sgp4 Constants::from_elements: {e}"))
-    })?;
+    let constants = sgp4::Constants::from_elements(elements)
+        .map_err(|e| AstroError::SatelliteError(format!("sgp4 Constants::from_elements: {e}")))?;
     let pred = constants
         .propagate(sgp4::MinutesSinceEpoch(minutes_since_epoch))
         .map_err(|e| AstroError::SatelliteError(format!("sgp4 propagate: {e}")))?;
     let p = pred.position;
-    let d = (teach.position[0] - p[0]).hypot(teach.position[1] - p[1]).hypot(teach.position[2] - p[2]);
+    let d = (teach.position[0] - p[0])
+        .hypot(teach.position[1] - p[1])
+        .hypot(teach.position[2] - p[2]);
     Ok(d)
 }
 
@@ -195,7 +202,8 @@ mod tests {
         let a = semi_major_axis_km_from_mean_motion(el.mean_motion);
         let e = el.eccentricity;
         let r_pf = a * (1.0 - e * e) / (1.0 + e * nu.cos());
-        let r_norm = (st.position[0].powi(2) + st.position[1].powi(2) + st.position[2].powi(2)).sqrt();
+        let r_norm =
+            (st.position[0].powi(2) + st.position[1].powi(2) + st.position[2].powi(2)).sqrt();
         assert!(
             (r_norm - r_pf).abs() < 1.0,
             "in-plane radius from elements should match |r|; got {r_norm} vs {r_pf}"

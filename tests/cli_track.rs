@@ -198,7 +198,10 @@ fn malformed_tle_prints_educational_error_and_hint() {
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Error:"), "missing error line; stderr was:\n{stderr}");
+    assert!(
+        stderr.contains("Error:"),
+        "missing error line; stderr was:\n{stderr}"
+    );
     assert!(
         stderr.contains("69 are required"),
         "error should explain the 69-column rule; stderr was:\n{stderr}"
@@ -221,7 +224,10 @@ fn checksum_error_explains_the_rule() {
         .output()
         .expect("the ephemerust binary should run");
 
-    assert!(!output.status.success(), "a bad checksum must yield a non-zero exit code");
+    assert!(
+        !output.status.success(),
+        "a bad checksum must yield a non-zero exit code"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

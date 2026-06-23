@@ -4,6 +4,8 @@
 
 | Calculation | Accuracy |
 |-------------|----------|
+| Propagated TEME state (default) | Matches `sgp4` WGS84+IAU path; ~tens of metres vs Vallado/AFSPC reference at epoch |
+| Propagated TEME state (`--afspc` / `PropagationModel::AfspcCompatibility`) | Sub-metre vs Vallado verification vectors at epoch |
 | Solar position | ~1 arcminute |
 | Lunar position | ~10 arcminutes (limited perturbation terms) |
 | RA/Dec ↔ Alt/Az | sub-arcsecond (floating-point limited) |
@@ -23,6 +25,10 @@ See [vsop87.md](vsop87.md) for the per-planet VSOP87 accuracy breakdown.
   precession/nutation corrections (IAU-76/FK5 and IAU-2000/2006 documented for the future).
 - **No light-time correction** for planetary positions.
 - **No atmospheric refraction** in Alt/Az conversions.
+- **Satellite propagation model** — default propagation uses the `sgp4` crate's WGS84 + IAU
+  path (aligned with WGS84 geodetic output). Optional AFSPC compatibility selects WGS72 +
+  legacy sidereal/epoch for Vallado / NORAD reference reproduction (`--afspc` on `track`,
+  `PropagationModel::AfspcCompatibility` in the library).
 - **Truncated VSOP87D** — each planet uses only the leading terms, giving a few arcminutes
   rather than the sub-arcsecond accuracy of the full series.
 - **Satellite `look_angles`** — for the satellite pipeline, `ObserverLocation::elevation` is

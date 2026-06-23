@@ -10,7 +10,7 @@ use serde::Serialize;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    
+
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
@@ -114,6 +114,9 @@ enum Commands {
         /// With `--format human` and a ground track, emit JSON array instead of CSV
         #[arg(long, default_value_t = false)]
         ground_track_json: bool,
+        /// Use WGS72 + AFSPC sidereal/epoch propagation (Vallado / legacy NORAD reference)
+        #[arg(long, default_value_t = false)]
+        afspc: bool,
     },
 }
 
@@ -160,60 +163,76 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     init_logging(cli.verbose);
-    
+
     match cli.command {
-        Commands::Convert { from, to, coords, gmst } => {
-            match (from.to_lowercase().as_str(), to.to_lowercase().as_str()) {
-                ("ra-dec" | "radec", "alt-az" | "altaz") => {
-                    let result = parse_and_convert_radec_to_altaz(&coords)?;
-                    let (alt_deg, alt_min, alt_sec, alt_sign) = format_angle(result.alt);
-                    let (az_deg, az_min, az_sec, _) = format_angle(result.az);
-                    println!("Alt: {}{:02}°{:02}'{:02}\"", alt_sign, alt_deg, alt_min, alt_sec);
-                    println!("Az:  {:03}°{:02}'{:02}\"", az_deg, az_min, az_sec);
-                },
-                ("alt-az" | "altaz", "ra-dec" | "radec") => {
-                    let result = parse_and_convert_altaz_to_radec(&coords)?;
-                    let (ra_h, ra_m, ra_s) = format_time(result.ra);
-                    let (dec_deg, dec_min, dec_sec, dec_sign) = format_angle(result.dec);
-                    println!("RA:  {:02}:{:02}:{:02}", ra_h, ra_m, ra_s);
-                    println!("Dec: {}{:02}°{:02}'{:02}\"", dec_sign, dec_deg, dec_min, dec_sec);
-                },
-                ("ecef", "eci") => {
-                    let result = parse_and_convert_ecef_to_eci(&coords, gmst)?;
-                    println!("X: {:.3} m", result.x);
-                    println!("Y: {:.3} m", result.y);
-                    println!("Z: {:.3} m", result.z);
-                },
-                ("eci", "ecef") => {
-                    let result = parse_and_convert_eci_to_ecef(&coords, gmst)?;
-                    println!("X: {:.3} m", result.x);
-                    println!("Y: {:.3} m", result.y);
-                    println!("Z: {:.3} m", result.z);
-                },
-                _ => {
-                    return Err(ephemerust::AstroError::InvalidCoordinate(
-                        format!("Unsupported conversion: {} to {}", from, to)
-                    ));
-                }
+        Commands::Convert {
+            from,
+            to,
+            coords,
+            gmst,
+        } => match (from.to_lowercase().as_str(), to.to_lowercase().as_str()) {
+            ("ra-dec" | "radec", "alt-az" | "altaz") => {
+                let result = parse_and_convert_radec_to_altaz(&coords)?;
+                let (alt_deg, alt_min, alt_sec, alt_sign) = format_angle(result.alt);
+                let (az_deg, az_min, az_sec, _) = format_angle(result.az);
+                println!(
+                    "Alt: {}{:02}°{:02}'{:02}\"",
+                    alt_sign, alt_deg, alt_min, alt_sec
+                );
+                println!("Az:  {:03}°{:02}'{:02}\"", az_deg, az_min, az_sec);
+            }
+            ("alt-az" | "altaz", "ra-dec" | "radec") => {
+                let result = parse_and_convert_altaz_to_radec(&coords)?;
+                let (ra_h, ra_m, ra_s) = format_time(result.ra);
+                let (dec_deg, dec_min, dec_sec, dec_sign) = format_angle(result.dec);
+                println!("RA:  {:02}:{:02}:{:02}", ra_h, ra_m, ra_s);
+                println!(
+                    "Dec: {}{:02}°{:02}'{:02}\"",
+                    dec_sign, dec_deg, dec_min, dec_sec
+                );
+            }
+            ("ecef", "eci") => {
+                let result = parse_and_convert_ecef_to_eci(&coords, gmst)?;
+                println!("X: {:.3} m", result.x);
+                println!("Y: {:.3} m", result.y);
+                println!("Z: {:.3} m", result.z);
+            }
+            ("eci", "ecef") => {
+                let result = parse_and_convert_eci_to_ecef(&coords, gmst)?;
+                println!("X: {:.3} m", result.x);
+                println!("Y: {:.3} m", result.y);
+                println!("Z: {:.3} m", result.z);
+            }
+            _ => {
+                return Err(ephemerust::AstroError::InvalidCoordinate(format!(
+                    "Unsupported conversion: {} to {}",
+                    from, to
+                )));
             }
         },
-        Commands::RiseSet { object, latitude, longitude, date } => {
+        Commands::RiseSet {
+            object,
+            latitude,
+            longitude,
+            date,
+        } => {
             let date_time = if let Some(date_str) = date {
                 parse_date_time(&date_str, None)?
             } else {
                 chrono::Utc::now()
             };
-            
+
             let location = ephemerust::celestial::ObserverLocation {
                 latitude,
                 longitude,
                 elevation: 0.0,
             };
-            
+
             let obj = parse_celestial_object(&object)?;
-            
-            let rise_set = ephemerust::celestial::calculate_rise_set_times(obj, location, date_time)?;
-            
+
+            let rise_set =
+                ephemerust::celestial::calculate_rise_set_times(obj, location, date_time)?;
+
             match rise_set.rise {
                 Some(t) => println!("Rise: {}", t.format("%H:%M:%S UTC")),
                 None => println!("Rise: Does not rise"),
@@ -222,29 +241,42 @@ fn run() -> Result<()> {
                 Some(t) => println!("Set:  {}", t.format("%H:%M:%S UTC")),
                 None => println!("Set:  Does not set"),
             }
-        },
+        }
         Commands::Position { object, date } => {
             let date_time = parse_date_time(&date, None)?;
             let obj = parse_celestial_object(&object)?;
-            
+
             let pos = ephemerust::celestial::calculate_position(obj, date_time)?;
             let (ra_h, ra_m, ra_s) = format_time(pos.ra);
             let (dec_deg, dec_min, dec_sec, dec_sign) = format_angle(pos.dec);
-            
+
             println!("RA:  {:02}:{:02}:{:02}", ra_h, ra_m, ra_s);
-            println!("Dec: {}{:02}°{:02}'{:02}\"", dec_sign, dec_deg, dec_min, dec_sec);
-        },
+            println!(
+                "Dec: {}{:02}°{:02}'{:02}\"",
+                dec_sign, dec_deg, dec_min, dec_sec
+            );
+        }
         Commands::Time { date, time } => {
             let date_time = parse_date_time(&date, time.as_deref())?;
             let jd = ephemerust::time::julian_date(date_time);
             let gmst = ephemerust::time::greenwich_mean_sidereal_time(jd);
             let (h, m, s) = format_time(gmst);
-            
+
             println!("JD:   {:.6}", jd);
             println!("GMST: {:02}:{:02}:{:02}", h, m, s);
-        },
-        Commands::Orbital { semi_major, eccentricity, inclination, raan, arg_periapsis, mean_anomaly, mu } => {
-            use ephemerust::orbital::{OrbitalElements, orbital_period, mean_to_true_anomaly, elements_to_state_vector};
+        }
+        Commands::Orbital {
+            semi_major,
+            eccentricity,
+            inclination,
+            raan,
+            arg_periapsis,
+            mean_anomaly,
+            mu,
+        } => {
+            use ephemerust::orbital::{
+                elements_to_state_vector, mean_to_true_anomaly, orbital_period, OrbitalElements,
+            };
 
             let elements = OrbitalElements {
                 semi_major_axis: semi_major,
@@ -259,16 +291,22 @@ fn run() -> Result<()> {
             let true_anomaly = mean_to_true_anomaly(mean_anomaly, eccentricity);
             let state = elements_to_state_vector(elements, mu)?;
 
-            println!("Elements: a={} km, e={}, i={}°, Ω={}°, ω={}°, M={}°",
-                semi_major, eccentricity, inclination, raan, arg_periapsis, mean_anomaly);
+            println!(
+                "Elements: a={} km, e={}, i={}°, Ω={}°, ω={}°, M={}°",
+                semi_major, eccentricity, inclination, raan, arg_periapsis, mean_anomaly
+            );
             println!("Period:   {:.1} s ({:.2} min)", period_s, period_s / 60.0);
             println!("True anomaly: {:.4}°", true_anomaly);
             println!("State vector (inertial frame):");
-            println!("  Position [km]:   x={:.3} y={:.3} z={:.3}",
-                state.position[0], state.position[1], state.position[2]);
-            println!("  Velocity [km/s]: vx={:.6} vy={:.6} vz={:.6}",
-                state.velocity[0], state.velocity[1], state.velocity[2]);
-        },
+            println!(
+                "  Position [km]:   x={:.3} y={:.3} z={:.3}",
+                state.position[0], state.position[1], state.position[2]
+            );
+            println!(
+                "  Velocity [km/s]: vx={:.6} vy={:.6} vz={:.6}",
+                state.velocity[0], state.velocity[1], state.velocity[2]
+            );
+        }
         Commands::Track {
             tle_file,
             tle,
@@ -282,6 +320,7 @@ fn run() -> Result<()> {
             ground_track_hours,
             ground_track_step_sec,
             ground_track_json,
+            afspc,
         } => run_track(
             tle_file,
             tle,
@@ -295,9 +334,10 @@ fn run() -> Result<()> {
             ground_track_hours,
             ground_track_step_sec,
             ground_track_json,
+            afspc,
         )?,
     }
-    
+
     Ok(())
 }
 
@@ -352,6 +392,8 @@ struct TrackJsonOutput {
     ground_track_hours: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ground_track_step_sec: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    propagation_model: Option<ephemerust::satellite::PropagationModel>,
 }
 
 fn tle_summary_json(tle: &ephemerust::satellite::Tle) -> TleSummaryJson {
@@ -402,8 +444,7 @@ fn resolve_tle_input(
     }
     if tle_url.is_some() {
         return Err(ephemerust::AstroError::SatelliteError(
-            "fetching a TLE from --tle-url is not implemented yet; use --tle or --tle-file."
-                .into(),
+            "fetching a TLE from --tle-url is not implemented yet; use --tle or --tle-file.".into(),
         ));
     }
     match (tle_file, tle) {
@@ -429,12 +470,20 @@ fn run_track(
     ground_track_hours: u32,
     ground_track_step_sec: u64,
     ground_track_json: bool,
+    afspc: bool,
 ) -> Result<()> {
     use chrono::Duration;
     use ephemerust::celestial::ObserverLocation;
     use ephemerust::satellite::{
-        ground_track, ground_track_to_csv, ground_track_to_json, look_angles, predict_passes,
-        propagate, subpoint, Tle,
+        ground_track_with_model, ground_track_to_csv, ground_track_to_json, look_angles_with_model,
+        predict_passes_with_model, propagate_with_model, subpoint_with_model,
+        PropagationModel, Tle,
+    };
+
+    let model = if afspc {
+        PropagationModel::AfspcCompatibility
+    } else {
+        PropagationModel::Modern
     };
 
     const DEFAULT_LAT_DEG: f64 = 47.9088;
@@ -458,6 +507,9 @@ fn run_track(
     }
 
     let parsed: Tle = resolve_tle_input(tle_file, tle, tle_url)?;
+    if afspc {
+        log::info!("track: using AFSPC compatibility propagation (WGS72 + legacy sidereal/epoch)");
+    }
     let obs = ObserverLocation {
         latitude: latitude.unwrap_or(DEFAULT_LAT_DEG),
         longitude: longitude.unwrap_or(DEFAULT_LON_DEG),
@@ -478,12 +530,22 @@ fn run_track(
                 pass_min_elevation_deg: None,
                 ground_track_hours: None,
                 ground_track_step_sec: None,
+                propagation_model: None,
+            };
+
+            let set_propagation_meta = |out: &mut TrackJsonOutput| {
+                out.propagation_model = Some(model);
             };
 
             let include_tle = matches!(
                 mode,
-                TrackMode::All | TrackMode::Tle | TrackMode::State | TrackMode::Subpoint
-                    | TrackMode::Look | TrackMode::Passes | TrackMode::Ground
+                TrackMode::All
+                    | TrackMode::Tle
+                    | TrackMode::State
+                    | TrackMode::Subpoint
+                    | TrackMode::Look
+                    | TrackMode::Passes
+                    | TrackMode::Ground
             );
             if include_tle {
                 out.tle = Some(tle_summary_json(&parsed));
@@ -498,7 +560,8 @@ fn run_track(
                     return Ok(());
                 }
                 TrackMode::State => {
-                    out.state = Some(propagate(&parsed, parsed.epoch)?);
+                    set_propagation_meta(&mut out);
+                    out.state = Some(propagate_with_model(&parsed, parsed.epoch, model)?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
                     })?;
@@ -506,7 +569,8 @@ fn run_track(
                     return Ok(());
                 }
                 TrackMode::Subpoint => {
-                    out.subpoint = Some(subpoint(&parsed, parsed.epoch)?);
+                    set_propagation_meta(&mut out);
+                    out.subpoint = Some(subpoint_with_model(&parsed, parsed.epoch, model)?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
                     })?;
@@ -514,12 +578,13 @@ fn run_track(
                     return Ok(());
                 }
                 TrackMode::Look => {
+                    set_propagation_meta(&mut out);
                     out.observer = Some(ObserverJson {
                         latitude_deg: obs.latitude,
                         longitude_deg: obs.longitude,
                         elevation_m: obs.elevation,
                     });
-                    out.look_angles = Some(look_angles(&parsed, parsed.epoch, obs)?);
+                    out.look_angles = Some(look_angles_with_model(&parsed, parsed.epoch, obs, model)?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
                     })?;
@@ -527,8 +592,8 @@ fn run_track(
                     return Ok(());
                 }
                 TrackMode::Passes => {
-                    let win_end =
-                        parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
+                    set_propagation_meta(&mut out);
+                    let win_end = parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
                     out.observer = Some(ObserverJson {
                         latitude_deg: obs.latitude,
                         longitude_deg: obs.longitude,
@@ -536,12 +601,13 @@ fn run_track(
                     });
                     out.predict_passes_hours = Some(predict_passes_hours);
                     out.pass_min_elevation_deg = Some(pass_min_elevation_deg);
-                    out.passes = Some(predict_passes(
+                    out.passes = Some(predict_passes_with_model(
                         &parsed,
                         obs,
                         parsed.epoch,
                         win_end,
                         pass_min_elevation_deg,
+                        model,
                     )?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
@@ -550,27 +616,23 @@ fn run_track(
                     return Ok(());
                 }
                 TrackMode::Ground => {
+                    set_propagation_meta(&mut out);
                     if ground_track_step_sec == 0 {
                         return Err(ephemerust::AstroError::SatelliteError(
                             "--ground-track-step-sec must be at least 1".into(),
                         ));
                     }
-                    let win_end =
-                        parsed.epoch + Duration::hours(i64::from(ground_track_hours));
-                    let step = Duration::seconds(i64::try_from(ground_track_step_sec).map_err(
-                        |_| {
+                    let win_end = parsed.epoch + Duration::hours(i64::from(ground_track_hours));
+                    let step =
+                        Duration::seconds(i64::try_from(ground_track_step_sec).map_err(|_| {
                             ephemerust::AstroError::SatelliteError(
                                 "--ground-track-step-sec is too large for chrono::Duration".into(),
                             )
-                        },
-                    )?);
+                        })?);
                     out.ground_track_hours = Some(ground_track_hours);
                     out.ground_track_step_sec = Some(ground_track_step_sec);
-                    out.ground_track = Some(ground_track(
-                        &parsed,
-                        parsed.epoch,
-                        win_end,
-                        step,
+                    out.ground_track = Some(ground_track_with_model(
+                        &parsed, parsed.epoch, win_end, step, model,
                     )?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
@@ -579,25 +641,27 @@ fn run_track(
                     return Ok(());
                 }
                 TrackMode::All => {
+                    set_propagation_meta(&mut out);
                     out.observer = Some(ObserverJson {
                         latitude_deg: obs.latitude,
                         longitude_deg: obs.longitude,
                         elevation_m: obs.elevation,
                     });
-                    out.state = Some(propagate(&parsed, parsed.epoch)?);
-                    out.subpoint = Some(subpoint(&parsed, parsed.epoch)?);
-                    out.look_angles = Some(look_angles(&parsed, parsed.epoch, obs)?);
+                    out.state = Some(propagate_with_model(&parsed, parsed.epoch, model)?);
+                    out.subpoint = Some(subpoint_with_model(&parsed, parsed.epoch, model)?);
+                    out.look_angles = Some(look_angles_with_model(&parsed, parsed.epoch, obs, model)?);
                     if predict_passes_hours > 0 {
                         let win_end =
                             parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
                         out.predict_passes_hours = Some(predict_passes_hours);
                         out.pass_min_elevation_deg = Some(pass_min_elevation_deg);
-                        out.passes = Some(predict_passes(
+                        out.passes = Some(predict_passes_with_model(
                             &parsed,
                             obs,
                             parsed.epoch,
                             win_end,
                             pass_min_elevation_deg,
+                            model,
                         )?);
                     }
                     if ground_track_hours > 0 {
@@ -606,24 +670,21 @@ fn run_track(
                                 "--ground-track-step-sec must be at least 1".into(),
                             ));
                         }
-                        let win_end =
-                            parsed.epoch + Duration::hours(i64::from(ground_track_hours));
-                        let step = Duration::seconds(i64::try_from(ground_track_step_sec).map_err(
-                            |_| {
+                        let win_end = parsed.epoch + Duration::hours(i64::from(ground_track_hours));
+                        let step = Duration::seconds(
+                            i64::try_from(ground_track_step_sec).map_err(|_| {
                                 ephemerust::AstroError::SatelliteError(
                                     "--ground-track-step-sec is too large for chrono::Duration"
                                         .into(),
                                 )
-                            },
-                        )?);
+                            })?,
+                        );
                         out.ground_track_hours = Some(ground_track_hours);
                         out.ground_track_step_sec = Some(ground_track_step_sec);
-                        out.ground_track = Some(ground_track(
-                            &parsed,
-                            parsed.epoch,
-                            win_end,
-                            step,
-                        )?);
+                        out.ground_track =
+                            Some(ground_track_with_model(
+                                &parsed, parsed.epoch, win_end, step, model,
+                            )?);
                     }
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
@@ -636,7 +697,7 @@ fn run_track(
         TrackFormat::Human => match mode {
             TrackMode::Tle => print_tle_summary(&parsed),
             TrackMode::State => {
-                let state = propagate(&parsed, parsed.epoch)?;
+                let state = propagate_with_model(&parsed, parsed.epoch, model)?;
                 println!("State at epoch (TEME frame):");
                 println!(
                     "  Position [km]:   x={:.3} y={:.3} z={:.3}",
@@ -648,14 +709,14 @@ fn run_track(
                 );
             }
             TrackMode::Subpoint => {
-                let sub = subpoint(&parsed, parsed.epoch)?;
+                let sub = subpoint_with_model(&parsed, parsed.epoch, model)?;
                 println!("Sub-satellite point at epoch (WGS84 geodetic):");
                 println!("  Latitude:  {:+.6}°", sub.latitude_deg);
                 println!("  Longitude: {:+.6}°", sub.longitude_deg);
                 println!("  Altitude:  {:.3} km (ellipsoidal)", sub.altitude_km);
             }
             TrackMode::Look => {
-                let look = look_angles(&parsed, parsed.epoch, obs)?;
+                let look = look_angles_with_model(&parsed, parsed.epoch, obs, model)?;
                 println!(
                     "Look angles at epoch (observer {:.4}° N, {:.4}° lon, WGS84 h = {:.0} m):",
                     obs.latitude, obs.longitude, obs.elevation
@@ -673,12 +734,13 @@ fn run_track(
             }
             TrackMode::Passes => {
                 let win_end = parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
-                let passes = predict_passes(
+                let passes = predict_passes_with_model(
                     &parsed,
                     obs,
                     parsed.epoch,
                     win_end,
                     pass_min_elevation_deg,
+                    model,
                 )?;
                 println!(
                     "Predicted passes ({} h from epoch, min elevation {:.1}°):",
@@ -710,30 +772,31 @@ fn run_track(
                     ));
                 }
                 let win_end = parsed.epoch + Duration::hours(i64::from(ground_track_hours));
-                let step = Duration::seconds(i64::try_from(ground_track_step_sec).map_err(
-                    |_| {
+                let step =
+                    Duration::seconds(i64::try_from(ground_track_step_sec).map_err(|_| {
                         ephemerust::AstroError::SatelliteError(
                             "--ground-track-step-sec is too large for chrono::Duration".into(),
                         )
-                    },
-                )?);
-                let samples = ground_track(&parsed, parsed.epoch, win_end, step)?;
+                    })?);
+                let samples = ground_track_with_model(&parsed, parsed.epoch, win_end, step, model)?;
                 if ground_track_json {
                     println!("Ground track (JSON, {} samples):", samples.len());
                     println!("{}", ground_track_to_json(&samples)?);
                 } else {
                     println!(
                         "Ground track (CSV, {} h from epoch, step {} s, {} samples):",
-                        ground_track_hours, ground_track_step_sec, samples.len()
+                        ground_track_hours,
+                        ground_track_step_sec,
+                        samples.len()
                     );
                     print!("{}", ground_track_to_csv(&samples));
                 }
             }
             TrackMode::All => {
                 print_tle_summary(&parsed);
-                let state = propagate(&parsed, parsed.epoch)?;
-                let sub = subpoint(&parsed, parsed.epoch)?;
-                let look = look_angles(&parsed, parsed.epoch, obs)?;
+                let state = propagate_with_model(&parsed, parsed.epoch, model)?;
+                let sub = subpoint_with_model(&parsed, parsed.epoch, model)?;
+                let look = look_angles_with_model(&parsed, parsed.epoch, obs, model)?;
                 println!();
                 println!("State at epoch (TEME frame):");
                 println!(
@@ -765,14 +828,14 @@ fn run_track(
                     look.range_rate_km_s
                 );
                 if predict_passes_hours > 0 {
-                    let win_end =
-                        parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
-                    let passes = predict_passes(
+                    let win_end = parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
+                    let passes = predict_passes_with_model(
                         &parsed,
                         obs,
                         parsed.epoch,
                         win_end,
                         pass_min_elevation_deg,
+                        model,
                     )?;
                     println!();
                     println!(
@@ -804,16 +867,14 @@ fn run_track(
                             "--ground-track-step-sec must be at least 1".into(),
                         ));
                     }
-                    let win_end =
-                        parsed.epoch + Duration::hours(i64::from(ground_track_hours));
-                    let step = Duration::seconds(i64::try_from(ground_track_step_sec).map_err(
-                        |_| {
+                    let win_end = parsed.epoch + Duration::hours(i64::from(ground_track_hours));
+                    let step =
+                        Duration::seconds(i64::try_from(ground_track_step_sec).map_err(|_| {
                             ephemerust::AstroError::SatelliteError(
                                 "--ground-track-step-sec is too large for chrono::Duration".into(),
                             )
-                        },
-                    )?);
-                    let samples = ground_track(&parsed, parsed.epoch, win_end, step)?;
+                        })?);
+                    let samples = ground_track_with_model(&parsed, parsed.epoch, win_end, step, model)?;
                     println!();
                     if ground_track_json {
                         println!("Ground track (JSON, {} samples):", samples.len());
@@ -821,7 +882,9 @@ fn run_track(
                     } else {
                         println!(
                             "Ground track (CSV, {} h from epoch, step {} s, {} samples):",
-                            ground_track_hours, ground_track_step_sec, samples.len()
+                            ground_track_hours,
+                            ground_track_step_sec,
+                            samples.len()
                         );
                         print!("{}", ground_track_to_csv(&samples));
                     }
@@ -839,9 +902,15 @@ fn print_tle_summary(tle: &ephemerust::satellite::Tle) {
     if let Some(name) = &tle.name {
         println!("Object:        {}", name);
     }
-    println!("Catalog #:     {} ({})", tle.catalog_number, tle.classification);
+    println!(
+        "Catalog #:     {} ({})",
+        tle.catalog_number, tle.classification
+    );
     println!("Intl. desig.:  {}", tle.international_designator);
-    println!("Epoch (UTC):   {}", tle.epoch.format("%Y-%m-%d %H:%M:%S%.3f"));
+    println!(
+        "Epoch (UTC):   {}",
+        tle.epoch.format("%Y-%m-%d %H:%M:%S%.3f")
+    );
     println!("Inclination:   {:.4}°", tle.inclination_deg);
     println!("RAAN:          {:.4}°", tle.raan_deg);
     println!("Eccentricity:  {:.7}", tle.eccentricity);
@@ -858,20 +927,26 @@ fn init_logging(verbose: bool) {
     env_logger::init();
 }
 
-fn parse_date_time(date_str: &str, time_str: Option<&str>) -> Result<chrono::DateTime<chrono::Utc>> {
-    use chrono::{DateTime, Utc, NaiveDate, NaiveTime};
-    
+fn parse_date_time(
+    date_str: &str,
+    time_str: Option<&str>,
+) -> Result<chrono::DateTime<chrono::Utc>> {
+    use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+
     let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
         .map_err(|e| ephemerust::AstroError::InvalidTime(format!("Invalid date: {}", e)))?;
-    
+
     let time = if let Some(ts) = time_str {
         NaiveTime::parse_from_str(ts, "%H:%M:%S")
             .map_err(|e| ephemerust::AstroError::InvalidTime(format!("Invalid time: {}", e)))?
     } else {
         NaiveTime::from_hms_opt(12, 0, 0).unwrap()
     };
-    
-    Ok(DateTime::from_naive_utc_and_offset(date.and_time(time), Utc))
+
+    Ok(DateTime::from_naive_utc_and_offset(
+        date.and_time(time),
+        Utc,
+    ))
 }
 
 fn format_time(hours: f64) -> (i32, i32, i32) {
@@ -890,65 +965,85 @@ fn format_angle(degrees: f64) -> (i32, i32, i32, &'static str) {
 }
 
 fn parse_and_convert_radec_to_altaz(coords: &str) -> Result<ephemerust::coordinates::AltAz> {
-    use ephemerust::coordinates::{RaDec, ra_dec_to_alt_az};
-    use ephemerust::time::{julian_date, greenwich_mean_sidereal_time, local_sidereal_time};
-    
+    use ephemerust::coordinates::{ra_dec_to_alt_az, RaDec};
+    use ephemerust::time::{greenwich_mean_sidereal_time, julian_date, local_sidereal_time};
+
     let parts: Vec<&str> = coords.split(',').collect();
     if parts.len() != 2 {
-        return Err(ephemerust::AstroError::InvalidCoordinate("Expected: hours,degrees".to_string()));
+        return Err(ephemerust::AstroError::InvalidCoordinate(
+            "Expected: hours,degrees".to_string(),
+        ));
     }
-    
-    let ra: f64 = parts[0].trim().parse()
+
+    let ra: f64 = parts[0]
+        .trim()
+        .parse()
         .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid RA".to_string()))?;
-    let dec: f64 = parts[1].trim().parse()
+    let dec: f64 = parts[1]
+        .trim()
+        .parse()
         .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid Dec".to_string()))?;
-    
+
     let jd = julian_date(chrono::Utc::now());
     let gmst = greenwich_mean_sidereal_time(jd);
     let (lat, lon) = (47.9088, -122.2503);
     let lst = local_sidereal_time(gmst, lon);
-    
+
     ra_dec_to_alt_az(RaDec { ra, dec }, lat, lon, lst)
 }
 
 fn parse_and_convert_altaz_to_radec(coords: &str) -> Result<ephemerust::coordinates::RaDec> {
-    use ephemerust::coordinates::{AltAz, alt_az_to_ra_dec};
-    use ephemerust::time::{julian_date, greenwich_mean_sidereal_time, local_sidereal_time};
-    
+    use ephemerust::coordinates::{alt_az_to_ra_dec, AltAz};
+    use ephemerust::time::{greenwich_mean_sidereal_time, julian_date, local_sidereal_time};
+
     let parts: Vec<&str> = coords.split(',').collect();
     if parts.len() != 2 {
-        return Err(ephemerust::AstroError::InvalidCoordinate("Expected: altitude,azimuth".to_string()));
+        return Err(ephemerust::AstroError::InvalidCoordinate(
+            "Expected: altitude,azimuth".to_string(),
+        ));
     }
-    
-    let alt: f64 = parts[0].trim().parse()
+
+    let alt: f64 = parts[0]
+        .trim()
+        .parse()
         .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid altitude".to_string()))?;
-    let az: f64 = parts[1].trim().parse()
+    let az: f64 = parts[1]
+        .trim()
+        .parse()
         .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid azimuth".to_string()))?;
-    
+
     let jd = julian_date(chrono::Utc::now());
     let gmst = greenwich_mean_sidereal_time(jd);
     let (lat, lon) = (47.9088, -122.2503);
     let lst = local_sidereal_time(gmst, lon);
-    
+
     alt_az_to_ra_dec(AltAz { alt, az }, lat, lon, lst)
 }
 
-fn parse_and_convert_ecef_to_eci(coords: &str, gmst_opt: Option<f64>) -> Result<ephemerust::coordinates::Eci> {
-    use ephemerust::coordinates::{Ecef, ecef_to_eci};
-    use ephemerust::time::{julian_date, greenwich_mean_sidereal_time};
-    
+fn parse_and_convert_ecef_to_eci(
+    coords: &str,
+    gmst_opt: Option<f64>,
+) -> Result<ephemerust::coordinates::Eci> {
+    use ephemerust::coordinates::{ecef_to_eci, Ecef};
+    use ephemerust::time::{greenwich_mean_sidereal_time, julian_date};
+
     let parts: Vec<&str> = coords.split(',').collect();
     if parts.len() != 3 {
-        return Err(ephemerust::AstroError::InvalidCoordinate("Expected: x,y,z (in meters)".to_string()));
+        return Err(ephemerust::AstroError::InvalidCoordinate(
+            "Expected: x,y,z (in meters)".to_string(),
+        ));
     }
-    
-    let x: f64 = parts[0].trim().parse()
-        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid x coordinate".to_string()))?;
-    let y: f64 = parts[1].trim().parse()
-        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid y coordinate".to_string()))?;
-    let z: f64 = parts[2].trim().parse()
-        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid z coordinate".to_string()))?;
-    
+
+    let x: f64 = parts[0].trim().parse().map_err(|_| {
+        ephemerust::AstroError::InvalidCoordinate("Invalid x coordinate".to_string())
+    })?;
+    let y: f64 = parts[1].trim().parse().map_err(|_| {
+        ephemerust::AstroError::InvalidCoordinate("Invalid y coordinate".to_string())
+    })?;
+    let z: f64 = parts[2].trim().parse().map_err(|_| {
+        ephemerust::AstroError::InvalidCoordinate("Invalid z coordinate".to_string())
+    })?;
+
     let gmst = if let Some(gmst_val) = gmst_opt {
         gmst_val
     } else {
@@ -956,26 +1051,34 @@ fn parse_and_convert_ecef_to_eci(coords: &str, gmst_opt: Option<f64>) -> Result<
         let jd = julian_date(chrono::Utc::now());
         greenwich_mean_sidereal_time(jd)
     };
-    
+
     ecef_to_eci(Ecef { x, y, z }, gmst)
 }
 
-fn parse_and_convert_eci_to_ecef(coords: &str, gmst_opt: Option<f64>) -> Result<ephemerust::coordinates::Ecef> {
-    use ephemerust::coordinates::{Eci, eci_to_ecef};
-    use ephemerust::time::{julian_date, greenwich_mean_sidereal_time};
-    
+fn parse_and_convert_eci_to_ecef(
+    coords: &str,
+    gmst_opt: Option<f64>,
+) -> Result<ephemerust::coordinates::Ecef> {
+    use ephemerust::coordinates::{eci_to_ecef, Eci};
+    use ephemerust::time::{greenwich_mean_sidereal_time, julian_date};
+
     let parts: Vec<&str> = coords.split(',').collect();
     if parts.len() != 3 {
-        return Err(ephemerust::AstroError::InvalidCoordinate("Expected: x,y,z (in meters)".to_string()));
+        return Err(ephemerust::AstroError::InvalidCoordinate(
+            "Expected: x,y,z (in meters)".to_string(),
+        ));
     }
-    
-    let x: f64 = parts[0].trim().parse()
-        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid x coordinate".to_string()))?;
-    let y: f64 = parts[1].trim().parse()
-        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid y coordinate".to_string()))?;
-    let z: f64 = parts[2].trim().parse()
-        .map_err(|_| ephemerust::AstroError::InvalidCoordinate("Invalid z coordinate".to_string()))?;
-    
+
+    let x: f64 = parts[0].trim().parse().map_err(|_| {
+        ephemerust::AstroError::InvalidCoordinate("Invalid x coordinate".to_string())
+    })?;
+    let y: f64 = parts[1].trim().parse().map_err(|_| {
+        ephemerust::AstroError::InvalidCoordinate("Invalid y coordinate".to_string())
+    })?;
+    let z: f64 = parts[2].trim().parse().map_err(|_| {
+        ephemerust::AstroError::InvalidCoordinate("Invalid z coordinate".to_string())
+    })?;
+
     let gmst = if let Some(gmst_val) = gmst_opt {
         gmst_val
     } else {
@@ -983,28 +1086,28 @@ fn parse_and_convert_eci_to_ecef(coords: &str, gmst_opt: Option<f64>) -> Result<
         let jd = julian_date(chrono::Utc::now());
         greenwich_mean_sidereal_time(jd)
     };
-    
+
     eci_to_ecef(Eci { x, y, z }, gmst)
 }
 
 /// Parses a celestial object name into a CelestialObject enum.
-/// 
+///
 /// Supports:
 /// - "sun" or "Sun" → Sun
 /// - "moon" or "Moon" → Moon
 /// - Planet names (case-insensitive): mercury, venus, mars, jupiter, saturn, uranus, neptune
-/// 
+///
 /// # Arguments
 /// * `object_name` - Name of the celestial object
-/// 
+///
 /// # Returns
 /// CelestialObject enum variant
-/// 
+///
 /// # Errors
 /// Returns an error if the object name is not recognized
 fn parse_celestial_object(object_name: &str) -> Result<ephemerust::celestial::CelestialObject> {
     let obj_lower = object_name.to_lowercase();
-    
+
     match obj_lower.as_str() {
         "sun" => Ok(ephemerust::celestial::CelestialObject::Sun),
         "moon" => Ok(ephemerust::celestial::CelestialObject::Moon),

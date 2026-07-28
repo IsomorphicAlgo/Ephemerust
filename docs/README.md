@@ -17,6 +17,7 @@ documents the proposed `--tle-url` / CelesTrak usage and engineering acceptance 
 | [Satellite tracking plan](satellite-tracking-plan.md) | Iterative, stage-gated plan for TLE/SGP4 tracking and pass prediction |
 | [SGP4 & TLE teaching notes](sgp4.md) | Near-Earth SGP4 narrative, references, and the `sgp4_teaching` module |
 | [Accuracy & limitations](accuracy-and-limits.md) | What's accurate, what's approximate, what's missing |
+| [Rust idioms](rust-idioms.md) | How the crate teaches Rust: ownership, `static` data, traits, doctests, benchmarks |
 | [Architecture](architecture.md) | Module layout, error handling, logging, testing |
 | [Roadmap](roadmap.md) | Phase 2 (API service), server hardware, future work |
 

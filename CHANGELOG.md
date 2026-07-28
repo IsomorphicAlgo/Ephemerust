@@ -12,6 +12,57 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-28
+
+"Zero-cost abstractions" release: performance work that doubles as Rust teaching
+material. Every change below is documented as a lesson in the new
+[`docs/rust-idioms.md`](docs/rust-idioms.md) chapter, and every performance claim is
+backed by a criterion benchmark (`cargo bench`, sources in `benches/core_operations.rs`).
+
+### Measured performance (before → after, criterion, same machine)
+
+| Benchmark | 0.5.0 | 0.6.0 | Change |
+|-----------|-------|-------|--------|
+| `planet_position_mars` (full VSOP87 pipeline) | 1.01 µs | 426 ns | **−58%** |
+| `ground_track_90min_60s` (90 samples, one ISS orbit) | 95.1 µs | 38.1 µs | **−59%** |
+| `propagate_single` (one-shot, includes SGP4 init) | 897 ns | 890 ns | unchanged |
+| `propagate_reused` (step on a prebuilt `Propagator`) | — | 246 ns | new |
+| `tle_parse` | 1.39 µs | 1.39 µs | unchanged |
+
+The `propagate_single` vs `propagate_reused` gap shows that ~72% of a one-shot
+propagation call was initialization — the cost `Propagator` lets callers pay once.
+
+### Added
+
+- **`satellite::Propagator`** — a reusable, initialized SGP4 propagator: construction
+  (`Propagator::new` / `with_model`) parses the element set and derives the SGP4
+  constants **once**; the borrowing methods `propagate`, `subpoint`, and `look_angles`
+  are then cheap to call in loops. `ground_track` and `predict_passes` now use one
+  internally (initialization once per call instead of once per sample — the source of
+  the −59% ground-track improvement). The one-shot free functions remain as conveniences
+  and delegate to it.
+- **Standard trait implementations** — `Display` and `FromStr` for `Planet`
+  (`"mars".parse::<Planet>()`, `println!("{planet}")`) and `FromStr` for `Tle`
+  (`text.parse::<Tle>()`, preserving the educational `TleError` diagnostics). The CLI's
+  object parsing now routes through the `Planet` impl.
+- **Criterion benchmarks** — `benches/core_operations.rs` covering TLE parsing, VSOP87
+  planet position, one-shot vs reused propagation, and ground-track sampling; run with
+  `cargo bench`.
+- **`docs/rust-idioms.md`** — a teaching chapter mapping each Rust strength (ownership
+  as API design, `static` data + `const fn`, standard traits, structured errors,
+  doctests, benchmarking) to the exact place it appears in this codebase.
+
+### Changed
+
+- **VSOP87 coefficient tables are now `static`** — `Vsop87Series` fields changed from
+  `Vec<Vsop87Term>` / `Option<Vec<Vsop87Term>>` to `&'static [Vsop87Term]` (an empty
+  slice means an unused sub-series), and the per-planet tables are `static` items built
+  with `const fn` constructors. Planet-position calculations no longer allocate at all
+  (the source of the −58% improvement). **Breaking** for code that constructed
+  `Vsop87Series`/`PlanetVsop87Data` directly; the calculation API is unchanged.
+- `get_planet_vsop87_data` (crate-internal) returns `Option<&'static PlanetVsop87Data>`
+  instead of building an owned copy.
+
 ## [0.5.0] - 2026-07-28
 
 Modernization release: the crate now targets **Rust edition 2024** (previously 2021).

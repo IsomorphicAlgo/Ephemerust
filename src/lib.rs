@@ -145,21 +145,21 @@ pub use error::{AstroError, Result};
 
 // Re-export coordinate types and WGS84 geodetic helpers
 pub use coordinates::{
-    ecef_to_geodetic_wgs84, geodetic_wgs84_to_ecef, AltAz, Ecef, Eci, Geodetic, RaDec,
+    AltAz, Ecef, Eci, Geodetic, RaDec, ecef_to_geodetic_wgs84, geodetic_wgs84_to_ecef,
 };
 
 // Re-export celestial object types
 pub use celestial::{CelestialObject, ObserverLocation, RiseSetTimes};
 
 // Re-export planet types
-pub use planets::{calculate_planet_position, Planet};
+pub use planets::{Planet, calculate_planet_position};
 
 // Re-export satellite types and propagation / ground-point pipeline
 pub use satellite::{
-    ecef_to_geodetic, ground_track, ground_track_to_csv, ground_track_to_json, look_angles,
-    look_angles_with_model, predict_passes, predict_passes_with_model, propagate,
-    propagate_with_model, subpoint, subpoint_with_model, teme_to_ecef, GroundTrackSample,
-    LookAngles, Pass, PropagationModel, Subpoint, TemeState, Tle, TleError,
+    GroundTrackSample, LookAngles, Pass, PropagationModel, Propagator, Subpoint, TemeState, Tle,
+    TleError, ecef_to_geodetic, ground_track, ground_track_to_csv, ground_track_to_json,
+    look_angles, look_angles_with_model, predict_passes, predict_passes_with_model, propagate,
+    propagate_with_model, subpoint, subpoint_with_model, teme_to_ecef,
 };
 
 // Re-export time functions

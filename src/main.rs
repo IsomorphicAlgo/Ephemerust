@@ -275,7 +275,7 @@ fn run() -> Result<()> {
             mu,
         } => {
             use ephemerust::orbital::{
-                elements_to_state_vector, mean_to_true_anomaly, orbital_period, OrbitalElements,
+                OrbitalElements, elements_to_state_vector, mean_to_true_anomaly, orbital_period,
             };
 
             let elements = OrbitalElements {
@@ -475,9 +475,9 @@ fn run_track(
     use chrono::Duration;
     use ephemerust::celestial::ObserverLocation;
     use ephemerust::satellite::{
-        ground_track_with_model, ground_track_to_csv, ground_track_to_json, look_angles_with_model,
-        predict_passes_with_model, propagate_with_model, subpoint_with_model,
-        PropagationModel, Tle,
+        PropagationModel, Tle, ground_track_to_csv, ground_track_to_json, ground_track_with_model,
+        look_angles_with_model, predict_passes_with_model, propagate_with_model,
+        subpoint_with_model,
     };
 
     let model = if afspc {
@@ -584,7 +584,8 @@ fn run_track(
                         longitude_deg: obs.longitude,
                         elevation_m: obs.elevation,
                     });
-                    out.look_angles = Some(look_angles_with_model(&parsed, parsed.epoch, obs, model)?);
+                    out.look_angles =
+                        Some(look_angles_with_model(&parsed, parsed.epoch, obs, model)?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
                     })?;
@@ -632,7 +633,11 @@ fn run_track(
                     out.ground_track_hours = Some(ground_track_hours);
                     out.ground_track_step_sec = Some(ground_track_step_sec);
                     out.ground_track = Some(ground_track_with_model(
-                        &parsed, parsed.epoch, win_end, step, model,
+                        &parsed,
+                        parsed.epoch,
+                        win_end,
+                        step,
+                        model,
                     )?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
@@ -649,7 +654,8 @@ fn run_track(
                     });
                     out.state = Some(propagate_with_model(&parsed, parsed.epoch, model)?);
                     out.subpoint = Some(subpoint_with_model(&parsed, parsed.epoch, model)?);
-                    out.look_angles = Some(look_angles_with_model(&parsed, parsed.epoch, obs, model)?);
+                    out.look_angles =
+                        Some(look_angles_with_model(&parsed, parsed.epoch, obs, model)?);
                     if predict_passes_hours > 0 {
                         let win_end =
                             parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
@@ -681,10 +687,13 @@ fn run_track(
                         );
                         out.ground_track_hours = Some(ground_track_hours);
                         out.ground_track_step_sec = Some(ground_track_step_sec);
-                        out.ground_track =
-                            Some(ground_track_with_model(
-                                &parsed, parsed.epoch, win_end, step, model,
-                            )?);
+                        out.ground_track = Some(ground_track_with_model(
+                            &parsed,
+                            parsed.epoch,
+                            win_end,
+                            step,
+                            model,
+                        )?);
                     }
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
@@ -874,7 +883,8 @@ fn run_track(
                                 "--ground-track-step-sec is too large for chrono::Duration".into(),
                             )
                         })?);
-                    let samples = ground_track_with_model(&parsed, parsed.epoch, win_end, step, model)?;
+                    let samples =
+                        ground_track_with_model(&parsed, parsed.epoch, win_end, step, model)?;
                     println!();
                     if ground_track_json {
                         println!("Ground track (JSON, {} samples):", samples.len());
@@ -968,7 +978,7 @@ fn format_angle(degrees: f64) -> (i32, i32, i32, &'static str) {
 }
 
 fn parse_and_convert_radec_to_altaz(coords: &str) -> Result<ephemerust::coordinates::AltAz> {
-    use ephemerust::coordinates::{ra_dec_to_alt_az, RaDec};
+    use ephemerust::coordinates::{RaDec, ra_dec_to_alt_az};
     use ephemerust::time::{greenwich_mean_sidereal_time, julian_date, local_sidereal_time};
 
     let parts: Vec<&str> = coords.split(',').collect();
@@ -996,7 +1006,7 @@ fn parse_and_convert_radec_to_altaz(coords: &str) -> Result<ephemerust::coordina
 }
 
 fn parse_and_convert_altaz_to_radec(coords: &str) -> Result<ephemerust::coordinates::RaDec> {
-    use ephemerust::coordinates::{alt_az_to_ra_dec, AltAz};
+    use ephemerust::coordinates::{AltAz, alt_az_to_ra_dec};
     use ephemerust::time::{greenwich_mean_sidereal_time, julian_date, local_sidereal_time};
 
     let parts: Vec<&str> = coords.split(',').collect();
@@ -1027,7 +1037,7 @@ fn parse_and_convert_ecef_to_eci(
     coords: &str,
     gmst_opt: Option<f64>,
 ) -> Result<ephemerust::coordinates::Eci> {
-    use ephemerust::coordinates::{ecef_to_eci, Ecef};
+    use ephemerust::coordinates::{Ecef, ecef_to_eci};
     use ephemerust::time::{greenwich_mean_sidereal_time, julian_date};
 
     let parts: Vec<&str> = coords.split(',').collect();
@@ -1062,7 +1072,7 @@ fn parse_and_convert_eci_to_ecef(
     coords: &str,
     gmst_opt: Option<f64>,
 ) -> Result<ephemerust::coordinates::Ecef> {
-    use ephemerust::coordinates::{eci_to_ecef, Eci};
+    use ephemerust::coordinates::{Eci, eci_to_ecef};
     use ephemerust::time::{greenwich_mean_sidereal_time, julian_date};
 
     let parts: Vec<&str> = coords.split(',').collect();
@@ -1114,15 +1124,16 @@ fn parse_celestial_object(object_name: &str) -> Result<ephemerust::celestial::Ce
     match obj_lower.as_str() {
         "sun" => Ok(ephemerust::celestial::CelestialObject::Sun),
         "moon" => Ok(ephemerust::celestial::CelestialObject::Moon),
-        planet_name => {
-            // Try to parse as a planet
-            if let Some(planet) = ephemerust::planets::Planet::from_name(planet_name) {
-                Ok(ephemerust::celestial::CelestialObject::Planet(planet))
-            } else {
-                Err(ephemerust::AstroError::InvalidCoordinate(
-                    format!("Unknown object: {}. Supported: sun, moon, mercury, venus, mars, jupiter, saturn, uranus, neptune", object_name)
+        // Not the Sun or Moon: try the `FromStr` impl on `Planet` (str::parse), replacing
+        // its planet-only error with one that also mentions sun/moon.
+        planet_name => planet_name
+            .parse::<ephemerust::planets::Planet>()
+            .map(ephemerust::celestial::CelestialObject::Planet)
+            .map_err(|_| {
+                ephemerust::AstroError::InvalidCoordinate(format!(
+                    "Unknown object: {}. Supported: sun, moon, mercury, venus, mars, jupiter, saturn, uranus, neptune",
+                    object_name
                 ))
-            }
-        }
+            }),
     }
 }

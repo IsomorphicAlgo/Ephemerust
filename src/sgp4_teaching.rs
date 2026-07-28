@@ -32,7 +32,7 @@
 //! See the narrative chapter **`docs/sgp4.md`** at the repository root (also published on
 //! docs.rs with the crate) for the full SGP4 story and references.
 
-use crate::orbital::{elements_to_state_vector, orbital_period, OrbitalElements, StateVector};
+use crate::orbital::{OrbitalElements, StateVector, elements_to_state_vector, orbital_period};
 use crate::{AstroError, Result};
 
 /// WGS-72 Earth gravitational parameter (km³/s²), the value historically bundled with SGP4

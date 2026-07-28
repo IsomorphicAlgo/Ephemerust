@@ -6,7 +6,7 @@
 //! cargo run --example track_subpoint
 //! ```
 
-use ephemerust::satellite::{subpoint, Tle};
+use ephemerust::satellite::{Tle, subpoint};
 
 fn main() -> ephemerust::Result<()> {
     let tle = Tle::parse(

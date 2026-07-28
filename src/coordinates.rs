@@ -325,8 +325,10 @@ pub(crate) fn rotation_matrix_z_impl(angle_rad: f64) -> [[f64; 3]; 3] {
         "Rotation matrix Z-axis: angle={:.6} rad ({:.4}°), matrix=[{:.6}, {:.6}, 0.0; {:.6}, {:.6}, 0.0; 0.0, 0.0, 1.0]",
         angle_rad,
         angle_rad.to_degrees(),
-        matrix[0][0], matrix[0][1],
-        matrix[1][0], matrix[1][1]
+        matrix[0][0],
+        matrix[0][1],
+        matrix[1][0],
+        matrix[1][1]
     );
 
     matrix
@@ -447,7 +449,8 @@ pub fn ecef_to_eci(ecef: Ecef, gmst: f64) -> Result<Eci> {
         log::warn!(
             "ECEF coordinate distance ({:.3} m = {:.3} km) exceeds reasonable range (> 1,000,000 km). \
              This may indicate an input error. Proceeding with transformation.",
-            distance, distance / 1000.0
+            distance,
+            distance / 1000.0
         );
     }
 
@@ -472,7 +475,12 @@ pub fn ecef_to_eci(ecef: Ecef, gmst: f64) -> Result<Eci> {
     // Info logging: transformation operation
     log::info!(
         "ECEF to ECI transformation: input ECEF=({:.3}, {:.3}, {:.3}) m, distance={:.3} m, GMST={:.6} h (normalized: {:.6} h)",
-        ecef.x, ecef.y, ecef.z, distance, gmst, gmst_normalized
+        ecef.x,
+        ecef.y,
+        ecef.z,
+        distance,
+        gmst,
+        gmst_normalized
     );
 
     // Convert GMST (hours) to rotation angle (radians)
@@ -499,7 +507,9 @@ pub fn ecef_to_eci(ecef: Ecef, gmst: f64) -> Result<Eci> {
         log::warn!(
             "Distance changed during transformation: input={:.3} m, output={:.3} m, change={:.6} m. \
              This may indicate numerical precision issues.",
-            distance, output_distance, distance_change
+            distance,
+            output_distance,
+            distance_change
         );
     }
 
@@ -595,7 +605,8 @@ pub fn eci_to_ecef(eci: Eci, gmst: f64) -> Result<Ecef> {
         log::warn!(
             "ECI coordinate distance ({:.3} m = {:.3} km) exceeds reasonable range (> 1,000,000 km). \
              This may indicate an input error. Proceeding with transformation.",
-            distance, distance / 1000.0
+            distance,
+            distance / 1000.0
         );
     }
 
@@ -620,7 +631,12 @@ pub fn eci_to_ecef(eci: Eci, gmst: f64) -> Result<Ecef> {
     // Info logging: transformation operation
     log::info!(
         "ECI to ECEF transformation: input ECI=({:.3}, {:.3}, {:.3}) m, distance={:.3} m, GMST={:.6} h (normalized: {:.6} h)",
-        eci.x, eci.y, eci.z, distance, gmst, gmst_normalized
+        eci.x,
+        eci.y,
+        eci.z,
+        distance,
+        gmst,
+        gmst_normalized
     );
 
     // Convert GMST (hours) to rotation angle (radians)
@@ -647,7 +663,9 @@ pub fn eci_to_ecef(eci: Eci, gmst: f64) -> Result<Ecef> {
         log::warn!(
             "Distance changed during transformation: input={:.3} m, output={:.3} m, change={:.6} m. \
              This may indicate numerical precision issues.",
-            distance, output_distance, distance_change
+            distance,
+            output_distance,
+            distance_change
         );
     }
 

@@ -10,6 +10,8 @@ ephemerust/
 ├── CHANGELOG.md        # version & change history
 ├── examples/           # library-only demos (`cargo build --examples`)
 │   └── track_subpoint.rs
+├── benches/            # criterion benchmarks (`cargo bench`)
+│   └── core_operations.rs
 ├── docs/               # this documentation set
 └── src/
     ├── main.rs         # CLI entry point and command parsing
@@ -48,7 +50,8 @@ self-contained.
 - Celestial types: `CelestialObject`, `ObserverLocation`, `RiseSetTimes`
 - Planet types: `Planet`, `calculate_planet_position`
 - Satellite types: `Tle`, `TleError`, `TemeState`, `Subpoint`, `LookAngles`, `Pass`,
-  `GroundTrackSample`, `PropagationModel`; functions `propagate`, `propagate_with_model`,
+  `GroundTrackSample`, `PropagationModel`, `Propagator` (init-once, reusable SGP4 —
+  preferred for loops); functions `propagate`, `propagate_with_model`,
   `teme_to_ecef`, `ecef_to_geodetic`, `subpoint`, `look_angles`, `predict_passes`,
   `ground_track`, `ground_track_to_csv`, `ground_track_to_json` (and `*_with_model` variants)
 - **Teaching (non-operational):** `sgp4_teaching` — mean motion → **a**, two-body state vs
@@ -129,7 +132,7 @@ Multi-level logging via `log` + `env_logger`; `--verbose` raises the level to de
 
 ## Testing
 
-The suite has **117 unit tests + 8 CLI integration tests + 20 doctests** by default (all
+The suite has **117 unit tests + 8 CLI integration tests + 23 doctests** by default (all
 passing). With `cargo test --features network`, two additional CLI tests exercise the
 `--tle-url` placeholder path (nine integration tests total).
 
@@ -156,9 +159,18 @@ cargo test --release performance # performance tests
 
 ### Measured performance
 
-| Operation | Target | Actual |
-|-----------|--------|--------|
-| Planet calculation | < 10 ms | < 1 ms |
-| VSOP87 series eval | < 100 µs | < 100 µs |
-| ECEF/ECI transform | — | < 1 µs |
-| Coordinate conversion | — | < 1 µs |
+Backed by reproducible criterion benchmarks in `benches/core_operations.rs`
+(run `cargo bench`); numbers below are from the 0.6.0 release run — see the
+[CHANGELOG](../CHANGELOG.md) for the before/after comparison.
+
+| Benchmark | Time (0.6.0) |
+|-----------|--------------|
+| TLE parse | ~1.4 µs |
+| Planet position (full VSOP87 pipeline, allocation-free) | ~430 ns |
+| SGP4 propagation, one-shot (`propagate`: init + step) | ~890 ns |
+| SGP4 propagation, reused (`Propagator::propagate` step) | ~250 ns |
+| Ground track, 90 samples (one `Propagator`, init once) | ~38 µs |
+
+The one-shot vs reused gap is the point of `satellite::Propagator`: initialization
+dominates a single propagation, so loops should initialize once and propagate many
+times (see [rust-idioms.md](rust-idioms.md)).

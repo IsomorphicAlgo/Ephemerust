@@ -52,7 +52,7 @@
 //! ```
 
 use crate::celestial::ObserverLocation;
-use crate::coordinates::{ecef_to_geodetic_wgs84, eci_to_ecef, geodetic_wgs84_to_ecef, Ecef, Eci};
+use crate::coordinates::{Ecef, Eci, ecef_to_geodetic_wgs84, eci_to_ecef, geodetic_wgs84_to_ecef};
 use crate::{AstroError, Result};
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use serde::Serialize;
@@ -380,6 +380,8 @@ impl Tle {
         Self::parse(&text)
     }
 
+    // (See also the `FromStr` impl below, which makes `text.parse::<Tle>()` work.)
+
     /// Builds a [`Tle`] from an optional name and the two data lines, validating structure,
     /// checksums, and each field.
     pub fn from_lines(name: Option<&str>, line1: &str, line2: &str) -> Result<Self> {
@@ -446,6 +448,30 @@ impl Tle {
             mean_motion,
             revolution_number,
         })
+    }
+}
+
+/// Parses a TLE from text, exactly like [`Tle::parse`].
+///
+/// Implementing [`std::str::FromStr`] means a TLE can be produced by the standard
+/// `str::parse` machinery — `text.parse::<Tle>()` — and by any generic code written
+/// against the trait. The rich, teaching-oriented [`TleError`] diagnostics are preserved
+/// (wrapped in [`AstroError`]):
+///
+/// ```
+/// use ephemerust::satellite::Tle;
+///
+/// let tle: Tle = "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992\n\
+///                 2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008"
+///     .parse()
+///     .unwrap();
+/// assert_eq!(tle.catalog_number, 25544);
+/// ```
+impl std::str::FromStr for Tle {
+    type Err = AstroError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Tle::parse(s)
     }
 }
 
@@ -663,6 +689,201 @@ pub enum PropagationModel {
     AfspcCompatibility,
 }
 
+/// A reusable, initialized SGP4 propagator for one element set.
+///
+/// SGP4 has an expensive part and a cheap part: **initialization** (parsing the element
+/// set and deriving the secular/periodic coefficients in [`sgp4::Constants`]) costs far
+/// more than a single **propagation step**. The one-shot free functions ([`propagate`],
+/// [`subpoint`], [`look_angles`]) pay the initialization cost on *every call*, which is
+/// fine for a single lookup but wasteful in loops.
+///
+/// `Propagator` moves that distinction into the type system — a core Rust idiom:
+/// construction (`Propagator::new`) does the expensive work **once** and can fail, so it
+/// returns `Result<Self>`; the borrowing methods (`&self`) are then cheap, infallible to
+/// borrow, and safe to call thousands of times. Ownership makes the contract explicit:
+/// as long as you hold a `Propagator`, its initialized constants are valid — there is no
+/// "did I remember to initialize?" state to check at runtime.
+///
+/// [`ground_track`] and [`predict_passes`] use a `Propagator` internally, so they pay
+/// initialization once per call rather than once per sample.
+///
+/// # Example
+///
+/// ```
+/// use chrono::Duration;
+/// use ephemerust::satellite::{Propagator, Tle};
+///
+/// let tle = Tle::parse(
+///     "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992\n\
+///      2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008",
+/// )
+/// .unwrap();
+///
+/// // Initialize once...
+/// let prop = Propagator::new(&tle).unwrap();
+///
+/// // ...then propagate many times cheaply.
+/// for minutes in 0..90 {
+///     let t = tle.epoch + Duration::minutes(minutes);
+///     let state = prop.propagate(t).unwrap();
+///     assert!(state.position_km.iter().all(|c| c.is_finite()));
+/// }
+/// ```
+pub struct Propagator {
+    elements: sgp4::Elements,
+    constants: sgp4::Constants,
+    model: PropagationModel,
+}
+
+impl Propagator {
+    /// Initializes a propagator with [`PropagationModel::Modern`] (WGS84 + IAU).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AstroError::SatelliteError`] if the element set cannot be parsed or
+    /// yields invalid epoch constants.
+    pub fn new(tle: &Tle) -> Result<Self> {
+        Self::with_model(tle, PropagationModel::default())
+    }
+
+    /// Initializes a propagator with an explicit [`PropagationModel`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Propagator::new`].
+    pub fn with_model(tle: &Tle, model: PropagationModel) -> Result<Self> {
+        let elements =
+            sgp4::Elements::from_tle(tle.name.clone(), tle.line1.as_bytes(), tle.line2.as_bytes())
+                .map_err(|e| {
+                    AstroError::SatelliteError(format!(
+                        "could not parse element set for propagation: {e}"
+                    ))
+                })?;
+
+        let constants = match model {
+            PropagationModel::Modern => sgp4::Constants::from_elements(&elements).map_err(|e| {
+                AstroError::SatelliteError(format!("invalid orbital elements for propagation: {e}"))
+            })?,
+            PropagationModel::AfspcCompatibility => {
+                sgp4::Constants::from_elements_afspc_compatibility_mode(&elements).map_err(|e| {
+                    AstroError::SatelliteError(format!(
+                        "invalid orbital elements for AFSPC propagation: {e}"
+                    ))
+                })?
+            }
+        };
+
+        Ok(Self {
+            elements,
+            constants,
+            model,
+        })
+    }
+
+    /// The [`PropagationModel`] this propagator was initialized with.
+    pub fn model(&self) -> PropagationModel {
+        self.model
+    }
+
+    /// Propagates to `time` and returns the [`TemeState`] (position km, velocity km/s).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AstroError::SatelliteError`] if the target time is too far from the
+    /// element-set epoch to represent, or if the propagation diverges (for example, a
+    /// decayed orbit or an eccentricity driven out of range).
+    pub fn propagate(&self, time: DateTime<Utc>) -> Result<TemeState> {
+        let minutes = self
+            .elements
+            .datetime_to_minutes_since_epoch(&time.naive_utc())
+            .map_err(|e| {
+                AstroError::SatelliteError(format!(
+                    "target time is too far from the element-set epoch to represent: {e}"
+                ))
+            })?;
+
+        let prediction = match self.model {
+            PropagationModel::Modern => self.constants.propagate(minutes),
+            PropagationModel::AfspcCompatibility => {
+                self.constants.propagate_afspc_compatibility_mode(minutes)
+            }
+        }
+        .map_err(|e| AstroError::SatelliteError(format!("SGP4 propagation diverged: {e}")))?;
+
+        Ok(TemeState {
+            position_km: prediction.position,
+            velocity_km_s: prediction.velocity,
+        })
+    }
+
+    /// Propagates to `time` and returns the **sub-satellite point** (geodetic latitude,
+    /// longitude, height above the WGS84 ellipsoid).
+    ///
+    /// Equivalent to [`Propagator::propagate`] followed by [`teme_to_ecef`] and
+    /// [`ecef_to_geodetic`].
+    pub fn subpoint(&self, time: DateTime<Utc>) -> Result<Subpoint> {
+        let state = self.propagate(time)?;
+        let ecef = teme_to_ecef(&state, time)?;
+        ecef_to_geodetic(ecef)
+    }
+
+    /// Topocentric look angles from this element set to `observer` at `time`.
+    ///
+    /// See [`look_angles`] for conventions (azimuth clockwise from true north, elevation
+    /// above the local horizon, observer elevation as metres above the WGS84 ellipsoid).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AstroError::CalculationError`] if the slant range is below ~10 m
+    /// (degenerate pointing); otherwise propagation or coordinate errors.
+    pub fn look_angles(
+        &self,
+        time: DateTime<Utc>,
+        observer: ObserverLocation,
+    ) -> Result<LookAngles> {
+        let state = self.propagate(time)?;
+        let r_sat = teme_to_ecef(&state, time)?;
+        let r_obs =
+            geodetic_wgs84_to_ecef(observer.latitude, observer.longitude, observer.elevation)?;
+
+        let rho_x = r_sat.x - r_obs.x;
+        let rho_y = r_sat.y - r_obs.y;
+        let rho_z = r_sat.z - r_obs.z;
+
+        let v_sat = teme_velocity_to_ecef_m_s(&state, time, &r_sat)?;
+        let v_obs = omega_cross_r_ecef(&r_obs);
+        let rdx = v_sat[0] - v_obs[0];
+        let rdy = v_sat[1] - v_obs[1];
+        let rdz = v_sat[2] - v_obs[2];
+
+        let (e, n, u) =
+            ecef_delta_to_enu(observer.latitude, observer.longitude, rho_x, rho_y, rho_z);
+        let range_m = (e * e + n * n + u * u).sqrt();
+        const MIN_RANGE_M: f64 = 10.0;
+        if !range_m.is_finite() || range_m < MIN_RANGE_M {
+            return Err(AstroError::CalculationError(format!(
+                "observer-to-satellite range ({range_m:.3} m) is too small for stable azimuth/elevation"
+            )));
+        }
+
+        let horizontal = (e * e + n * n).sqrt();
+        let elevation_deg = u.atan2(horizontal).to_degrees();
+        let mut azimuth_deg = e.atan2(n).to_degrees();
+        if azimuth_deg < 0.0 {
+            azimuth_deg += 360.0;
+        }
+
+        let range_rate_m_s = (rho_x * rdx + rho_y * rdy + rho_z * rdz) / range_m;
+
+        Ok(LookAngles {
+            azimuth_deg,
+            elevation_deg,
+            range_km: range_m / 1000.0,
+            range_rate_km_s: range_rate_m_s / 1000.0,
+        })
+    }
+}
+
 /// Propagates a TLE to the given UTC time and returns the [`TemeState`].
 ///
 /// Uses [`PropagationModel::Modern`] (WGS84 + IAU). For legacy reference reproduction see
@@ -700,58 +921,16 @@ pub fn propagate(tle: &Tle, time: DateTime<Utc>) -> Result<TemeState> {
 
 /// Propagates a TLE with an explicit [`PropagationModel`].
 ///
-/// The orbital elements are re-parsed from the original element-set lines and handed to the
-/// `sgp4` engine, which performs the SGP4/SDP4 propagation. The target time is converted to
-/// the engine's minutes-since-epoch representation; the result is the satellite's position
-/// (km) and velocity (km/s) in the TEME frame of epoch.
+/// This is a one-shot convenience: it initializes a [`Propagator`] (parsing the element
+/// set and deriving the SGP4 constants) and performs a single propagation. When
+/// propagating the **same element set at many times**, construct a [`Propagator`] once
+/// and reuse it — initialization dominates the cost of an individual step.
 pub fn propagate_with_model(
     tle: &Tle,
     time: DateTime<Utc>,
     model: PropagationModel,
 ) -> Result<TemeState> {
-    let elements =
-        sgp4::Elements::from_tle(tle.name.clone(), tle.line1.as_bytes(), tle.line2.as_bytes())
-            .map_err(|e| {
-                AstroError::SatelliteError(format!(
-                    "could not parse element set for propagation: {e}"
-                ))
-            })?;
-
-    let constants = match model {
-        PropagationModel::Modern => {
-            sgp4::Constants::from_elements(&elements).map_err(|e| {
-                AstroError::SatelliteError(format!("invalid orbital elements for propagation: {e}"))
-            })?
-        }
-        PropagationModel::AfspcCompatibility => {
-            sgp4::Constants::from_elements_afspc_compatibility_mode(&elements).map_err(|e| {
-                AstroError::SatelliteError(format!(
-                    "invalid orbital elements for AFSPC propagation: {e}"
-                ))
-            })?
-        }
-    };
-
-    let minutes = elements
-        .datetime_to_minutes_since_epoch(&time.naive_utc())
-        .map_err(|e| {
-            AstroError::SatelliteError(format!(
-                "target time is too far from the element-set epoch to represent: {e}"
-            ))
-        })?;
-
-    let prediction = match model {
-        PropagationModel::Modern => constants.propagate(minutes),
-        PropagationModel::AfspcCompatibility => {
-            constants.propagate_afspc_compatibility_mode(minutes)
-        }
-    }
-    .map_err(|e| AstroError::SatelliteError(format!("SGP4 propagation diverged: {e}")))?;
-
-    Ok(TemeState {
-        position_km: prediction.position,
-        velocity_km_s: prediction.velocity,
-    })
+    Propagator::with_model(tle, model)?.propagate(time)
 }
 
 /// Converts a TEME position to **ECEF** coordinates at the given UTC time.
@@ -798,14 +977,15 @@ pub fn subpoint(tle: &Tle, time: DateTime<Utc>) -> Result<Subpoint> {
 }
 
 /// Like [`subpoint`] with an explicit [`PropagationModel`].
+///
+/// One-shot convenience over [`Propagator::subpoint`]; for repeated sampling of the same
+/// element set, build one [`Propagator`] and reuse it.
 pub fn subpoint_with_model(
     tle: &Tle,
     time: DateTime<Utc>,
     model: PropagationModel,
 ) -> Result<Subpoint> {
-    let state = propagate_with_model(tle, time, model)?;
-    let ecef = teme_to_ecef(&state, time)?;
-    ecef_to_geodetic(ecef)
+    Propagator::with_model(tle, model)?.subpoint(time)
 }
 
 /// Samples the satellite **ground track** as WGS84 sub-satellite points from `window_start`
@@ -858,9 +1038,12 @@ pub fn ground_track_with_model(
     let est = ((span_ns / step_ns) as usize).min(500_000);
     let mut out = Vec::with_capacity(est);
 
+    // Initialize the SGP4 constants once; each sample is then a cheap propagation step.
+    let prop = Propagator::with_model(tle, model)?;
+
     let mut t = window_start;
     while t < window_end {
-        let s = subpoint_with_model(tle, t, model)?;
+        let s = prop.subpoint(t)?;
         out.push(GroundTrackSample {
             time: t,
             subpoint: s,
@@ -996,50 +1179,16 @@ pub fn look_angles(
 }
 
 /// Like [`look_angles`] with an explicit [`PropagationModel`].
+///
+/// One-shot convenience over [`Propagator::look_angles`]; for repeated lookups against the
+/// same element set (tracking loops, pass searches), build one [`Propagator`] and reuse it.
 pub fn look_angles_with_model(
     tle: &Tle,
     time: DateTime<Utc>,
     observer: ObserverLocation,
     model: PropagationModel,
 ) -> Result<LookAngles> {
-    let state = propagate_with_model(tle, time, model)?;
-    let r_sat = teme_to_ecef(&state, time)?;
-    let r_obs = geodetic_wgs84_to_ecef(observer.latitude, observer.longitude, observer.elevation)?;
-
-    let rho_x = r_sat.x - r_obs.x;
-    let rho_y = r_sat.y - r_obs.y;
-    let rho_z = r_sat.z - r_obs.z;
-
-    let v_sat = teme_velocity_to_ecef_m_s(&state, time, &r_sat)?;
-    let v_obs = omega_cross_r_ecef(&r_obs);
-    let rdx = v_sat[0] - v_obs[0];
-    let rdy = v_sat[1] - v_obs[1];
-    let rdz = v_sat[2] - v_obs[2];
-
-    let (e, n, u) = ecef_delta_to_enu(observer.latitude, observer.longitude, rho_x, rho_y, rho_z);
-    let range_m = (e * e + n * n + u * u).sqrt();
-    const MIN_RANGE_M: f64 = 10.0;
-    if !range_m.is_finite() || range_m < MIN_RANGE_M {
-        return Err(AstroError::CalculationError(format!(
-            "observer-to-satellite range ({range_m:.3} m) is too small for stable azimuth/elevation"
-        )));
-    }
-
-    let horizontal = (e * e + n * n).sqrt();
-    let elevation_deg = u.atan2(horizontal).to_degrees();
-    let mut azimuth_deg = e.atan2(n).to_degrees();
-    if azimuth_deg < 0.0 {
-        azimuth_deg += 360.0;
-    }
-
-    let range_rate_m_s = (rho_x * rdx + rho_y * rdy + rho_z * rdz) / range_m;
-
-    Ok(LookAngles {
-        azimuth_deg,
-        elevation_deg,
-        range_km: range_m / 1000.0,
-        range_rate_km_s: range_rate_m_s / 1000.0,
-    })
+    Propagator::with_model(tle, model)?.look_angles(time, observer)
 }
 
 /// Seconds per solar day (used only to convert mean motion from rev/day to an orbital period).
@@ -1055,13 +1204,8 @@ fn coarse_step_for_mean_motion(mean_motion_rev_per_day: f64) -> Duration {
     Duration::seconds(step_s as i64)
 }
 
-fn elevation_deg(
-    tle: &Tle,
-    t: DateTime<Utc>,
-    observer: ObserverLocation,
-    model: PropagationModel,
-) -> Result<f64> {
-    Ok(look_angles_with_model(tle, t, observer, model)?.elevation_deg)
+fn elevation_deg(prop: &Propagator, t: DateTime<Utc>, observer: ObserverLocation) -> Result<f64> {
+    Ok(prop.look_angles(t, observer)?.elevation_deg)
 }
 
 /// Heuristic: near-geosynchronous element sets (≈1 rev/day, equatorial) use a simplified
@@ -1074,27 +1218,26 @@ fn is_geo_heuristic(tle: &Tle) -> bool {
 }
 
 fn predict_passes_geo(
-    tle: &Tle,
+    prop: &Propagator,
     observer: ObserverLocation,
     window_start: DateTime<Utc>,
     window_end: DateTime<Utc>,
     min_elevation_deg: f64,
-    model: PropagationModel,
 ) -> Result<Vec<Pass>> {
     if window_end <= window_start {
         return Ok(Vec::new());
     }
     let mid = window_start + (window_end - window_start) / 2;
-    let el_start = elevation_deg(tle, window_start, observer, model)?;
-    let el_mid = elevation_deg(tle, mid, observer, model)?;
-    let el_end = elevation_deg(tle, window_end - Duration::milliseconds(1), observer, model)?;
+    let el_start = elevation_deg(prop, window_start, observer)?;
+    let el_mid = elevation_deg(prop, mid, observer)?;
+    let el_end = elevation_deg(prop, window_end - Duration::milliseconds(1), observer)?;
     let above =
         el_start >= min_elevation_deg && el_mid >= min_elevation_deg && el_end >= min_elevation_deg;
     if !above {
         return Ok(Vec::new());
     }
-    let la_a = look_angles_with_model(tle, window_start, observer, model)?;
-    let la_b = look_angles_with_model(tle, window_end - Duration::milliseconds(1), observer, model)?;
+    let la_a = prop.look_angles(window_start, observer)?;
+    let la_b = prop.look_angles(window_end - Duration::milliseconds(1), observer)?;
     Ok(vec![Pass {
         aos: window_start,
         culmination: mid,
@@ -1107,19 +1250,18 @@ fn predict_passes_geo(
 
 /// Refines a rising threshold crossing: `el(lo) < mask`, `el(hi) >= mask`.
 fn bisect_elevation_rising(
-    tle: &Tle,
+    prop: &Propagator,
     observer: ObserverLocation,
     mask: f64,
     mut lo: DateTime<Utc>,
     mut hi: DateTime<Utc>,
-    model: PropagationModel,
 ) -> Result<DateTime<Utc>> {
     for _ in 0..56 {
         if hi.signed_duration_since(lo) <= Duration::milliseconds(1) {
             break;
         }
         let mid = lo + (hi - lo) / 2;
-        let el = elevation_deg(tle, mid, observer, model)?;
+        let el = elevation_deg(prop, mid, observer)?;
         if el >= mask {
             hi = mid;
         } else {
@@ -1131,19 +1273,18 @@ fn bisect_elevation_rising(
 
 /// Refines a falling threshold crossing: `el(lo) >= mask`, `el(hi) < mask`.
 fn bisect_elevation_falling(
-    tle: &Tle,
+    prop: &Propagator,
     observer: ObserverLocation,
     mask: f64,
     mut lo: DateTime<Utc>,
     mut hi: DateTime<Utc>,
-    model: PropagationModel,
 ) -> Result<DateTime<Utc>> {
     for _ in 0..56 {
         if hi.signed_duration_since(lo) <= Duration::milliseconds(1) {
             break;
         }
         let mid = lo + (hi - lo) / 2;
-        let el = elevation_deg(tle, mid, observer, model)?;
+        let el = elevation_deg(prop, mid, observer)?;
         if el < mask {
             hi = mid;
         } else {
@@ -1155,16 +1296,15 @@ fn bisect_elevation_falling(
 
 /// Finds culmination time and maximum elevation between AOS and LOS (ternary search on time).
 fn culmination_time_and_max_el(
-    tle: &Tle,
+    prop: &Propagator,
     observer: ObserverLocation,
     aos: DateTime<Utc>,
     los: DateTime<Utc>,
-    model: PropagationModel,
 ) -> Result<(DateTime<Utc>, f64)> {
     let mut lo = aos;
     let mut hi = los;
     if hi <= lo {
-        let el = elevation_deg(tle, lo, observer, model)?;
+        let el = elevation_deg(prop, lo, observer)?;
         return Ok((lo, el));
     }
     for _ in 0..48 {
@@ -1174,8 +1314,8 @@ fn culmination_time_and_max_el(
         let third = (hi - lo) / 3;
         let m1 = lo + third;
         let m2 = hi - third;
-        let e1 = elevation_deg(tle, m1, observer, model)?;
-        let e2 = elevation_deg(tle, m2, observer, model)?;
+        let e1 = elevation_deg(prop, m1, observer)?;
+        let e2 = elevation_deg(prop, m2, observer)?;
         if e1 > e2 {
             hi = m2;
         } else {
@@ -1183,7 +1323,7 @@ fn culmination_time_and_max_el(
         }
     }
     let t_peak = lo + (hi - lo) / 2;
-    let max_el = elevation_deg(tle, t_peak, observer, model)?;
+    let max_el = elevation_deg(prop, t_peak, observer)?;
     Ok((t_peak, max_el))
 }
 
@@ -1228,22 +1368,20 @@ pub fn predict_passes_with_model(
     if window_end <= window_start {
         return Ok(Vec::new());
     }
+
+    // Initialize the SGP4 constants once for the entire search: the coarse scan,
+    // bisection refinements, and culmination search below share this propagator.
+    let prop = Propagator::with_model(tle, model)?;
+
     if is_geo_heuristic(tle) {
-        return predict_passes_geo(
-            tle,
-            observer,
-            window_start,
-            window_end,
-            min_elevation_deg,
-            model,
-        );
+        return predict_passes_geo(&prop, observer, window_start, window_end, min_elevation_deg);
     }
 
     let dt = coarse_step_for_mean_motion(tle.mean_motion);
     let mut passes = Vec::new();
 
     let mut prev_t = window_start;
-    let mut prev_el = elevation_deg(tle, prev_t, observer, model)?;
+    let mut prev_el = elevation_deg(&prop, prev_t, observer)?;
     let mut pending_aos: Option<DateTime<Utc>> = if prev_el >= min_elevation_deg {
         Some(window_start)
     } else {
@@ -1252,19 +1390,18 @@ pub fn predict_passes_with_model(
 
     let mut t = window_start + dt;
     while t < window_end {
-        let el = elevation_deg(tle, t, observer, model)?;
+        let el = elevation_deg(&prop, t, observer)?;
 
         if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
-            let aos = bisect_elevation_rising(tle, observer, min_elevation_deg, prev_t, t, model)?;
+            let aos = bisect_elevation_rising(&prop, observer, min_elevation_deg, prev_t, t)?;
             pending_aos = Some(aos);
         } else if pending_aos.is_some() && prev_el >= min_elevation_deg && el < min_elevation_deg {
             let aos = pending_aos.take().expect("aos");
-            let los = bisect_elevation_falling(tle, observer, min_elevation_deg, prev_t, t, model)?;
+            let los = bisect_elevation_falling(&prop, observer, min_elevation_deg, prev_t, t)?;
             if los > aos {
-                let (culm, max_el) =
-                    culmination_time_and_max_el(tle, observer, aos, los, model)?;
-                let la_aos = look_angles_with_model(tle, aos, observer, model)?;
-                let la_los = look_angles_with_model(tle, los, observer, model)?;
+                let (culm, max_el) = culmination_time_and_max_el(&prop, observer, aos, los)?;
+                let la_aos = prop.look_angles(aos, observer)?;
+                let la_los = prop.look_angles(los, observer)?;
                 passes.push(Pass {
                     aos,
                     culmination: culm,
@@ -1284,16 +1421,15 @@ pub fn predict_passes_with_model(
     // Final segment up to exclusive window end.
     let last_t = (window_end - Duration::milliseconds(1)).max(window_start);
     if last_t > prev_t {
-        let el = elevation_deg(tle, last_t, observer, model)?;
+        let el = elevation_deg(&prop, last_t, observer)?;
         let opened_in_tail =
             if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
                 pending_aos = Some(bisect_elevation_rising(
-                    tle,
+                    &prop,
                     observer,
                     min_elevation_deg,
                     prev_t,
                     last_t,
-                    model,
                 )?);
                 true
             } else {
@@ -1302,19 +1438,12 @@ pub fn predict_passes_with_model(
 
         if let Some(aos) = pending_aos {
             if !opened_in_tail && prev_el >= min_elevation_deg && el < min_elevation_deg {
-                let los = bisect_elevation_falling(
-                    tle,
-                    observer,
-                    min_elevation_deg,
-                    prev_t,
-                    last_t,
-                    model,
-                )?;
+                let los =
+                    bisect_elevation_falling(&prop, observer, min_elevation_deg, prev_t, last_t)?;
                 if los > aos {
-                    let (culm, max_el) =
-                        culmination_time_and_max_el(tle, observer, aos, los, model)?;
-                    let la_aos = look_angles_with_model(tle, aos, observer, model)?;
-                    let la_los = look_angles_with_model(tle, los, observer, model)?;
+                    let (culm, max_el) = culmination_time_and_max_el(&prop, observer, aos, los)?;
+                    let la_aos = prop.look_angles(aos, observer)?;
+                    let la_los = prop.look_angles(los, observer)?;
                     passes.push(Pass {
                         aos,
                         culmination: culm,
@@ -1327,10 +1456,9 @@ pub fn predict_passes_with_model(
             } else if el >= min_elevation_deg {
                 let los = window_end;
                 let los_sample = last_t;
-                let (culm, max_el) =
-                    culmination_time_and_max_el(tle, observer, aos, los_sample, model)?;
-                let la_aos = look_angles_with_model(tle, aos, observer, model)?;
-                let la_los = look_angles_with_model(tle, los_sample, observer, model)?;
+                let (culm, max_el) = culmination_time_and_max_el(&prop, observer, aos, los_sample)?;
+                let la_aos = prop.look_angles(aos, observer)?;
+                let la_los = prop.look_angles(los_sample, observer)?;
                 passes.push(Pass {
                     aos,
                     culmination: culm,

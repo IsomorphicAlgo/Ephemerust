@@ -66,7 +66,7 @@ The project is structured in two phases:
 
 ## Install & build
 
-From [crates.io](https://crates.io/crates/ephemerust) (release **0.4.0**):
+From [crates.io](https://crates.io/crates/ephemerust) (release **0.5.0**):
 
 ```bash
 cargo install ephemerust          # CLI binary on your PATH
@@ -189,10 +189,11 @@ The full mathematics, conventions, and engineering details live in [docs/](docs/
 Ephemerust follows [Semantic Versioning](https://semver.org/) and is intentionally in the
 `0.x` range while its public API stabilizes. During `0.x`, the minor version marks breaking
 changes and the patch version marks compatible ones; a `1.0.0` release is reserved for a
-deliberately committed-stable API. The minimum supported Rust version (MSRV) is **1.88**
-(see `Cargo.toml` `rust-version`). Optional **`network`** feature: enables the `track`
-`--tle-url` flag (still a stub until HTTP TLE retrieval is implemented). Published on
-[crates.io](https://crates.io/crates/ephemerust) as **`0.4.0`** (pre-1.0 API).
+deliberately committed-stable API. The crate targets **Rust edition 2024** with a minimum
+supported Rust version (MSRV) of **1.88** (see `Cargo.toml` `rust-version`). Optional
+**`network`** feature: enables the `track` `--tle-url` flag (still a stub until HTTP TLE
+retrieval is implemented). Published on
+[crates.io](https://crates.io/crates/ephemerust) as **`0.5.0`** (pre-1.0 API).
 
 ## Changelog
 

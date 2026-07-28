@@ -922,9 +922,12 @@ fn print_tle_summary(tle: &ephemerust::satellite::Tle) {
 }
 
 fn init_logging(verbose: bool) {
-    let log_level = if verbose { "debug" } else { "info" };
-    std::env::set_var("RUST_LOG", log_level);
-    env_logger::init();
+    // Configure the default level directly rather than via `std::env::set_var`,
+    // which became `unsafe` in edition 2024 (mutating the environment is not
+    // thread-safe). A user-supplied RUST_LOG still takes precedence.
+    let default_level = if verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_level))
+        .init();
 }
 
 fn parse_date_time(

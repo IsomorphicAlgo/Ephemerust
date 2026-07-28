@@ -1,7 +1,7 @@
 [package]
 name = "ephemerust"
-version = "0.4.0"
-edition = "2021"
+version = "0.5.0"
+edition = "2024"
 rust-version = "1.88"
 authors = ["Michael Hansen"]
 description = "An accessible, teaching-grade astronomy, orbital-mechanics, and satellite-tracking library and CLI for Rust"
@@ -21,15 +21,15 @@ network = []
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
 log = "0.4"
-env_logger = "0.10"
+env_logger = "0.11"
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sgp4 = "2.4.0"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.7"
 # Used by integration tests (`tests/cli_track.rs`) for JSON assertions.
 serde_json = "1.0"

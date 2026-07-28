@@ -12,6 +12,25 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-28
+
+Modernization release: the crate now targets **Rust edition 2024** (previously 2021).
+No public API changes; the version bump is precautionary given the edition and major
+dependency updates. MSRV remains **1.88**.
+
+### Changed
+
+- **Rust edition 2021 → 2024** — migrated with `cargo fix --edition`; the only source
+  change required was in CLI logging setup, where `std::env::set_var` (now `unsafe` in
+  edition 2024 because mutating the environment is not thread-safe) was replaced with a
+  direct `env_logger::Builder` configuration. A user-supplied `RUST_LOG` now takes
+  precedence over the `--verbose` flag's default instead of being overwritten.
+- **Dependency updates** — `thiserror` 1.0 → 2.0, `env_logger` 0.10 → 0.11, and
+  `criterion` (dev) 0.5 → 0.7. No code changes were required.
+- **Clippy cleanup** — replaced two `is_some()` + `unwrap()` patterns in the VSOP87
+  debug logging (`src/planets.rs`) with idiomatic `if let` bindings
+  (`clippy::unnecessary_unwrap` on current toolchains).
+
 ## [0.4.0] - 2026-06-22
 
 First [crates.io](https://crates.io/crates/ephemerust) release: teaching-grade astronomy,

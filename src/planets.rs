@@ -507,32 +507,30 @@ fn evaluate_vsop87_series(series: &Vsop87Series, t: f64) -> f64 {
     );
 
     // Evaluate series_4 (quartic term) if present
-    let s4 = series
-        .series_4
-        .as_ref()
-        .map(|terms| evaluate_series_terms(terms))
-        .unwrap_or(0.0);
-    if series.series_4.is_some() {
+    let s4 = if let Some(terms) = &series.series_4 {
+        let value = evaluate_series_terms(terms);
         debug!(
             "VSOP87 series_4 evaluation: {} terms, result = {:.10}",
-            series.series_4.as_ref().unwrap().len(),
-            s4
+            terms.len(),
+            value
         );
-    }
+        value
+    } else {
+        0.0
+    };
 
     // Evaluate series_5 (quintic term) if present
-    let s5 = series
-        .series_5
-        .as_ref()
-        .map(|terms| evaluate_series_terms(terms))
-        .unwrap_or(0.0);
-    if series.series_5.is_some() {
+    let s5 = if let Some(terms) = &series.series_5 {
+        let value = evaluate_series_terms(terms);
         debug!(
             "VSOP87 series_5 evaluation: {} terms, result = {:.10}",
-            series.series_5.as_ref().unwrap().len(),
-            s5
+            terms.len(),
+            value
         );
-    }
+        value
+    } else {
+        0.0
+    };
 
     // Combine series with time powers: L = L0 + L1×t + L2×t² + L3×t³ + L4×t⁴ + L5×t⁵
     // (VSOP87 spherical coefficients are stored directly in radians/AU; t is in Julian

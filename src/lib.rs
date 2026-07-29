@@ -27,6 +27,7 @@
 //! | [`time`] | Julian Date, Greenwich/Local sidereal time |
 //! | [`coordinates`] | RA/Dec ↔ Alt/Az, ECEF ↔ ECI, and WGS84 ECEF ↔ geodetic |
 //! | [`celestial`] | Sun/Moon position and rise/set; dispatch to planets |
+//! | [`eclipse`] | Earth-shadow geometry: sunlit / penumbra / umbra classification and entry/exit search |
 //! | [`orbital`] | Kepler's equation, orbital period, elements → state vectors |
 //! | [`planets`] | VSOP87 planetary ephemeris |
 //! | [`satellite`] | TLE / SGP4 propagation, TEME → ECEF → geodetic, look angles, passes, ground track |
@@ -50,9 +51,10 @@
 //!
 //! | Feature | Purpose |
 //! |---------|---------|
-//! | *(none by default)* | Default build: no HTTP client dependencies. |
-//! | `network` | Exposes the `track` CLI flag `--tle-url` for future CelesTrak/Space-Track-style
-//!   fetch; the handler is still a stub (“not implemented”) until wired in a later release. |
+//! | *(none by default)* | Default build: no HTTP client or TLS dependencies. |
+//! | `network` | Enables the `net` module (bounded HTTPS fetch of CelesTrak-style element-set
+//!   bulletins via `ureq`/rustls) and the `track` CLI flag `--tle-url`. See `http_plan.md`
+//!   for the operational requirements this implementation follows. |
 //!
 //! ## Example
 //!
@@ -75,6 +77,9 @@
 // Core modules
 pub mod celestial;
 pub mod coordinates;
+pub mod eclipse;
+#[cfg(feature = "network")]
+pub mod net;
 pub mod orbital;
 pub mod planets;
 pub mod satellite;
@@ -149,7 +154,10 @@ pub use coordinates::{
 };
 
 // Re-export celestial object types
-pub use celestial::{CelestialObject, ObserverLocation, RiseSetTimes};
+pub use celestial::{CelestialObject, ObserverLocation, RiseSetTimes, sun_vector_km};
+
+// Re-export Earth-shadow (eclipse) types
+pub use eclipse::{ShadowState, ShadowTransition, shadow_state, shadow_transitions};
 
 // Re-export planet types
 pub use planets::{Planet, calculate_planet_position};
@@ -159,7 +167,7 @@ pub use satellite::{
     GroundTrackSample, LookAngles, Pass, PropagationModel, Propagator, Subpoint, TemeState, Tle,
     TleError, ecef_to_geodetic, ground_track, ground_track_to_csv, ground_track_to_json,
     look_angles, look_angles_with_model, predict_passes, predict_passes_with_model, propagate,
-    propagate_with_model, subpoint, subpoint_with_model, teme_to_ecef,
+    propagate_with_model, select_tle, subpoint, subpoint_with_model, teme_to_ecef,
 };
 
 // Re-export time functions

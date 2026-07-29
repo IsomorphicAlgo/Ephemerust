@@ -214,10 +214,17 @@ pub fn calculate_position(
     }
 }
 
-fn calculate_solar_position(date: DateTime<Utc>) -> Result<crate::coordinates::RaDec> {
-    use crate::time::julian_date;
+/// One astronomical unit in kilometres (IAU 2012 definition).
+const AU_KM: f64 = 149_597_870.7;
 
-    let jd = julian_date(date);
+/// Low-precision solar elements at a Julian date: ecliptic longitude (radians), obliquity of
+/// the ecliptic (radians), and Earth–Sun distance (km).
+///
+/// This is the single source of solar geometry shared by [`calculate_position`] (RA/Dec form)
+/// and [`sun_vector_km`] (Cartesian form), so the two can never disagree. The series is the
+/// standard low-precision model (`M` = mean anomaly, equation-of-center to three terms,
+/// distance to two terms), good to ~0.01° in longitude and ~0.1% in distance.
+fn solar_elements(jd: f64) -> (f64, f64, f64) {
     const J2000: f64 = 2451545.0;
     let d = jd - J2000;
 
@@ -227,9 +234,19 @@ fn calculate_solar_position(date: DateTime<Utc>) -> Result<crate::coordinates::R
 
     let ecliptic_lon = mean_anomaly + eoc + 180.0 + 102.9372;
     let obliquity = 23.4393 - 0.0000004 * d;
+    let distance_au = 1.00014 - 0.01671 * m_rad.cos() - 0.00014 * (2.0 * m_rad).cos();
 
-    let lambda = ecliptic_lon.to_radians();
-    let epsilon = obliquity.to_radians();
+    (
+        ecliptic_lon.to_radians(),
+        obliquity.to_radians(),
+        distance_au * AU_KM,
+    )
+}
+
+fn calculate_solar_position(date: DateTime<Utc>) -> Result<crate::coordinates::RaDec> {
+    use crate::time::julian_date;
+
+    let (lambda, epsilon, _) = solar_elements(julian_date(date));
 
     let ra_rad = (lambda.sin() * epsilon.cos()).atan2(lambda.cos());
     let dec_rad = (lambda.sin() * epsilon.sin()).asin();
@@ -238,6 +255,50 @@ fn calculate_solar_position(date: DateTime<Utc>) -> Result<crate::coordinates::R
         ra: (ra_rad.to_degrees() / 15.0).rem_euclid(24.0),
         dec: dec_rad.to_degrees(),
     })
+}
+
+/// Computes the **geocentric equatorial position vector of the Sun** in kilometres at a UTC
+/// instant, referred to the equator and equinox of date.
+///
+/// Unlike [`calculate_position`], which returns only a direction (RA/Dec), this includes the
+/// Earth–Sun **distance** — which matters whenever the Sun must be treated as a body at a
+/// finite distance rather than a direction at infinity. The primary consumer is the
+/// [`crate::eclipse`] module, where the umbra/penumbra cone angles depend on how far away the
+/// Sun is.
+///
+/// The frame is close enough to the TEME frame of [`crate::satellite::TemeState`] for
+/// shadow-geometry purposes: the difference (precession/nutation vs the TEME equinox) is at
+/// the arcminute level, far below the ~0.5°+ angular scale of the Earth's shadow cones.
+///
+/// # Errors
+///
+/// Currently infallible; returns `Result` for consistency with the rest of the API.
+///
+/// # Example
+///
+/// ```
+/// use chrono::{TimeZone, Utc};
+/// use ephemerust::celestial::sun_vector_km;
+///
+/// // Early January: Earth is near perihelion, so the Sun is slightly closer than 1 AU.
+/// let t = Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap();
+/// let s = sun_vector_km(t)?;
+/// let dist = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt();
+/// assert!((1.466e8..1.48e8).contains(&dist), "perihelion distance ≈ 1.471e8 km, got {dist}");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn sun_vector_km(date: DateTime<Utc>) -> Result<[f64; 3]> {
+    use crate::time::julian_date;
+
+    let (lambda, epsilon, r_km) = solar_elements(julian_date(date));
+
+    // Ecliptic → equatorial rotation with the Sun's ecliptic latitude taken as 0
+    // (its true latitude never exceeds ~1.2 arcseconds).
+    Ok([
+        r_km * lambda.cos(),
+        r_km * lambda.sin() * epsilon.cos(),
+        r_km * lambda.sin() * epsilon.sin(),
+    ])
 }
 
 fn calculate_lunar_position(date: DateTime<Utc>) -> Result<crate::coordinates::RaDec> {

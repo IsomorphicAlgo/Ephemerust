@@ -257,8 +257,9 @@ Expose the library through a coherent, well-formatted command interface.
   document for scripting (`tle`, `observer`, `state`, `subpoint`, `look_angles`, optional
   `passes` / `ground_track`, and pass/ground metadata fields when applicable).
 - TLE sources: `--tle-file`, `--tle`, and (when built with **`--features network`**) **`--tle-url`**
-  (exclusive); URL fetch still returns a clear “not implemented yet” error until HTTP TLE
-  retrieval is implemented behind the same feature.
+  (exclusive); URL fetch is implemented as of **0.7.0** (bounded HTTPS client per
+  [`http_plan.md`](../http_plan.md)), with **`--tle-name`** selecting one object from
+  multi-TLE bulletins for any source.
 - Human output remains section-oriented; `--ground-track-json` still selects CSV vs. raw JSON
   array for the ground-track block when `--format human`.
 
@@ -312,8 +313,8 @@ Prepare the crate for external consumption.
 
 - Public API review and rustdoc coverage with runnable examples (crate-level MSRV/feature
   table; `#![deny(rustdoc::broken_intra_doc_links)]`; existing per-item examples retained).
-- Feature flags: **`network`** gates `--tle-url` on the `track` command (stub only until HTTP
-  fetch is implemented); MSRV documented in `Cargo.toml` and `readme.md`.
+- Feature flags: **`network`** gates `--tle-url` on the `track` command (stub at M9
+  sign-off; implemented in 0.7.0); MSRV documented in `Cargo.toml` and `readme.md`.
 - Updated `readme.md`, `CHANGELOG.md`, architecture/test-count tables, and this plan
   (Milestones 8–9 signed off; first crates.io release **0.4.0**).
 - Example program: `examples/track_subpoint.rs` (`cargo build --examples`).
@@ -393,7 +394,7 @@ M0–M9 scope. They are **not** blockers for the completed satellite-tracking mi
 
 | Item | Origin | Status / next step |
 |------|--------|-------------------|
-| **HTTP TLE fetch (`--tle-url`)** | M1 (deferred), M7 deliverable | Stub behind `network` feature; implement per [`http_plan.md`](../http_plan.md) |
+| **HTTP TLE fetch (`--tle-url`)** | M1 (deferred), M7 deliverable | ✅ **Implemented in 0.7.0** per [`http_plan.md`](../http_plan.md) (`src/net.rs`, `select_tle`/`--tle-name`, offline tests) |
 | **Space-Track authenticated fetch** | Out of scope for initial `--tle-url` | Separate compliance/API design if needed |
 | **Automated Skyfield / Heavens-Above validation** | M3–M5 test plans | In-tree plausibility + Vallado vectors; manual Astroviewer check in [`readme.md`](../readme.md); optional pinned external regression tests |
 | **M3 subpoint boundary tests** (equator, high inclination, ±180° lon) | M3 test plan | ✅ In-tree (`subpoint_*` tests in `satellite.rs`) |

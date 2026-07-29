@@ -1,6 +1,6 @@
 [package]
 name = "ephemerust"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Michael Hansen"]
@@ -12,11 +12,15 @@ readme = "readme.md"
 keywords = ["astronomy", "orbital-mechanics", "satellite", "ephemeris", "sgp4"]
 categories = ["command-line-utilities", "science"]
 
+# docs.rs should document the optional `net` module too.
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = []
-# Reserved for HTTP TLE fetch and related deps. When enabled, the `track` subcommand exposes
-# `--tle-url` (still returns “not implemented” until fetch is wired).
-network = []
+# HTTPS TLE fetch: enables the `net` library module and the `track` CLI flag `--tle-url`.
+# Pulls the minimal blocking HTTP client `ureq` (rustls TLS). See http_plan.md.
+network = ["dep:ureq"]
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
@@ -28,6 +32,7 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sgp4 = "2.4.0"
+ureq = { version = "3.3.0", optional = true }
 
 [dev-dependencies]
 criterion = "0.7"

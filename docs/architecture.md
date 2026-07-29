@@ -18,7 +18,9 @@ ephemerust/
     ├── lib.rs          # library root, re-exports, error types
     ├── time.rs         # Julian Date, sidereal time
     ├── coordinates.rs  # RA/Dec ↔ Alt/Az, ECEF ↔ ECI, WGS84 geodetic
-    ├── celestial.rs    # Sun/Moon positions, rise/set
+    ├── celestial.rs    # Sun/Moon positions, rise/set, Sun position vector
+    ├── eclipse.rs      # Earth-shadow geometry: sunlit/penumbra/umbra + entry/exit search
+    ├── net.rs          # bounded HTTPS TLE fetch (compiled only with `--features network`)
     ├── orbital.rs      # Kepler's equation, period, state vectors
     ├── planets.rs      # VSOP87 planetary positions
     ├── satellite.rs    # TLE/SGP4, TEME→ECEF→geodetic, look angles, passes, ground track
@@ -32,9 +34,12 @@ ephemerust/
 | `lib.rs` | Root; public API re-exports; `AstroError` / `Result` |
 | `time.rs` | Julian Date, GMST, LST |
 | `coordinates.rs` | Equatorial/horizontal, ECEF↔ECI, WGS84 ECEF↔geodetic |
-| `celestial.rs` | Sun/Moon position and rise/set; dispatches planet calls |
+| `celestial.rs` | Sun/Moon position and rise/set; Sun position vector; dispatches planet calls |
+| `eclipse.rs` | Conical Earth-shadow model: `ShadowState` classification and `shadow_transitions` entry/exit search |
+| `net.rs` | Bounded HTTPS element-set fetch (`network` feature only; see `http_plan.md`) |
 | `orbital.rs` | Orbital mechanics |
 | `planets.rs` | VSOP87 ephemeris (complex and self-contained) |
+| `satellite.rs` | TLE parsing/validation, `Propagator`/SGP4, subpoints, look angles, passes, ground track, `select_tle` |
 | `sgp4_teaching.rs` | Educational Kepler / mean-motion helpers vs `sgp4` (see `docs/sgp4.md`) |
 
 **Separation rationale**: `celestial.rs` handles the simpler Sun/Moon models and routes
@@ -47,13 +52,16 @@ self-contained.
 
 - Coordinate types: `RaDec`, `AltAz`, `Ecef`, `Eci`, `Geodetic`; WGS84 `geodetic_wgs84_to_ecef`,
   `ecef_to_geodetic_wgs84`
-- Celestial types: `CelestialObject`, `ObserverLocation`, `RiseSetTimes`
+- Celestial types: `CelestialObject`, `ObserverLocation`, `RiseSetTimes`; `sun_vector_km`
+- Eclipse types: `ShadowState`, `ShadowTransition`; functions `shadow_state`,
+  `shadow_transitions` (also `Propagator::shadow_state`)
 - Planet types: `Planet`, `calculate_planet_position`
 - Satellite types: `Tle`, `TleError`, `TemeState`, `Subpoint`, `LookAngles`, `Pass`,
   `GroundTrackSample`, `PropagationModel`, `Propagator` (init-once, reusable SGP4 —
   preferred for loops); functions `propagate`, `propagate_with_model`,
   `teme_to_ecef`, `ecef_to_geodetic`, `subpoint`, `look_angles`, `predict_passes`,
-  `ground_track`, `ground_track_to_csv`, `ground_track_to_json` (and `*_with_model` variants)
+  `ground_track`, `ground_track_to_csv`, `ground_track_to_json` (and `*_with_model`
+  variants), `select_tle` (pick one object from a multi-TLE bulletin)
 - **Teaching (non-operational):** `sgp4_teaching` — mean motion → **a**, two-body state vs
   `sgp4` for pedagogy (`docs/sgp4.md`)
 - Time functions: `julian_date`, `greenwich_mean_sidereal_time`, `local_sidereal_time`
@@ -70,14 +78,15 @@ self-contained.
 | `serde` | serialization (chrono types, ground-track JSON) |
 | `serde_json` | JSON export (`ground_track_to_json`, `track --format json`) |
 | `sgp4` | TLE parsing and SGP4/SDP4 satellite propagation engine |
+| `ureq` (optional, `network` only) | minimal blocking HTTPS client (rustls TLS) for `--tle-url` |
 | `criterion` (dev) | benchmarking |
 
 ## Cargo features
 
 | Feature | Effect |
 |---------|--------|
-| *(default)* | No HTTP dependencies; `track` accepts `--tle-file` and `--tle` only. |
-| `network` | Adds the `track --tle-url` flag (handler still a “not implemented” stub). |
+| *(default)* | No HTTP/TLS dependencies; `track` accepts `--tle-file` and `--tle` only. |
+| `network` | Compiles the `net` module and the `track --tle-url` flag: bounded HTTPS fetch of CelesTrak-style bulletins (timeouts, 2 MiB cap, no retries — see `http_plan.md`). |
 
 The **MSRV** is set in `Cargo.toml` (`package.rust-version`) and repeated in `readme.md`.
 
@@ -132,9 +141,10 @@ Multi-level logging via `log` + `env_logger`; `--verbose` raises the level to de
 
 ## Testing
 
-The suite has **117 unit tests + 8 CLI integration tests + 23 doctests** by default (all
-passing). With `cargo test --features network`, two additional CLI tests exercise the
-`--tle-url` placeholder path (nine integration tests total).
+The suite has **138 unit tests + 8 CLI integration tests + 28 doctests** by default (all
+passing). With `cargo test --features network`, the count grows to 141 unit + 9 CLI +
+7 offline network-fetch integration tests (`tests/network_fetch.rs`, which runs a loopback
+HTTP fixture server — no real network access in any configuration).
 
 - **Unit tests** — per-function, with known reference values, edge cases (poles, equator,
   origin, large coordinates), input validation, round-trip accuracy, and benchmarks.
@@ -160,15 +170,16 @@ cargo test --release performance # performance tests
 ### Measured performance
 
 Backed by reproducible criterion benchmarks in `benches/core_operations.rs`
-(run `cargo bench`); numbers below are from the 0.6.0 release run — see the
-[CHANGELOG](../CHANGELOG.md) for the before/after comparison.
+(run `cargo bench`); numbers below are from the 0.6.0/0.7.0 release runs — see the
+[CHANGELOG](../CHANGELOG.md) for before/after comparisons.
 
-| Benchmark | Time (0.6.0) |
-|-----------|--------------|
+| Benchmark | Time |
+|-----------|------|
 | TLE parse | ~1.4 µs |
 | Planet position (full VSOP87 pipeline, allocation-free) | ~430 ns |
 | SGP4 propagation, one-shot (`propagate`: init + step) | ~890 ns |
 | SGP4 propagation, reused (`Propagator::propagate` step) | ~250 ns |
+| Shadow state, reused (`Propagator::shadow_state`: step + Sun + cone test) | ~340 ns |
 | Ground track, 90 samples (one `Propagator`, init once) | ~38 µs |
 
 The one-shot vs reused gap is the point of `satellite::Propagator`: initialization

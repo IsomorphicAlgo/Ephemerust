@@ -1,5 +1,13 @@
 # Plan: Network TLE Retrieval (`--tle-url`) and CelesTrak Usage
 
+> **Status: implemented in 0.7.0.** The fetch client lives in `src/net.rs` (`ureq` +
+> rustls, connect/overall timeouts, 2 MiB body cap, ≤ 5 redirects, descriptive
+> `User-Agent`, no retries), multi-object selection in `satellite::select_tle` exposed as
+> the CLI flag `--tle-name` (§3.3 resolved via **additional CLI parameters**), and the
+> offline test suite in `tests/network_fetch.rs` (loopback fixture server; plain HTTP is
+> permitted toward loopback hosts only, HTTPS everywhere else). All acceptance criteria
+> in §7 are met; this document remains the operational reference.
+
 This document states the engineering approach for adding **live HTTP retrieval** of
 Two-Line Element (TLE) data to the Ephemerust CLI, the **operational constraints** imposed by
 public data providers (principally CelesTrak), and the **acceptance criteria** under which the
@@ -172,3 +180,4 @@ The `--tle-url` implementation **shall** be considered complete when:
 |----------|---------|
 | 1.0 | Initial plan: CelesTrak operational requirements and technical scope for `--tle-url`. |
 | 1.1 | Renamed document from `plan.md` to `http_plan.md`. |
+| 2.0 | **Implemented (release 0.7.0)**: `ureq`/rustls client in `src/net.rs`; `select_tle` + `--tle-name` for §3.3; offline loopback-server tests; status note added at top. |

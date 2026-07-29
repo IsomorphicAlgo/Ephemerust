@@ -12,6 +12,58 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-29
+
+"Physics and freshness" release: the two highest-value gaps identified for downstream
+consumers (notably [Chronus Gateway](https://github.com/IsomorphicAlgo/chronus-gateway))
+are closed. Satellites now know whether they are in the Earth's shadow, and element sets
+can be fetched live from CelesTrak-style HTTPS sources.
+
+### Added
+
+- **`eclipse` module — a real Earth-shadow model.** Conical umbra/penumbra geometry (the
+  standard apparent-disk-overlap test, Vallado §5.3), not a cylindrical approximation:
+  - [`ShadowState`] (`Sunlit` / `Penumbra` / `Umbra`, ordered by shadow depth,
+    `Display` + `Serialize`) and the pure, unit-testable classifier
+    `shadow_state_from_vectors` (geocentric km vectors in, state out).
+  - `Propagator::shadow_state(time)` and the free function `eclipse::shadow_state` for
+    per-frame checks — **341 ns** on a prebuilt `Propagator` (criterion,
+    `shadow_state_reused`), of which ~246 ns is the SGP4 step itself.
+  - `eclipse::shadow_transitions(prop, start, end, step)` — entry/exit search with
+    bisection refinement to ~1 ms. A coarse scan step that jumps straight from sunlit to
+    umbra still yields both boundary crossings, so the seconds-long LEO penumbra ramp is
+    never skipped.
+  - `celestial::sun_vector_km` — geocentric equatorial Sun **position vector** (km),
+    sharing one solar-elements series with the existing RA/Dec model, so direction and
+    distance can never disagree.
+- **`--tle-url` is implemented** (was a stub since 0.4.0). With `--features network`, the
+  new `net` module fetches element-set text over HTTPS via a **bounded client** (`ureq` +
+  rustls): 10 s connect / 30 s overall timeouts, 2 MiB response cap, ≤ 5 redirects,
+  descriptive `User-Agent`, **no retries** — per the CelesTrak operational requirements
+  recorded in `http_plan.md`. Plain HTTP is allowed only toward loopback (offline tests);
+  `file:` and remote `http:` are refused. Default builds still pull **zero** HTTP/TLS deps.
+- **`satellite::select_tle`** — selects one object from a multi-TLE bulletin (the normal
+  shape of CelesTrak responses) by case-insensitive name substring or exact NORAD catalog
+  number; errors list the available objects. Only the selected entry is fully validated,
+  so an unrelated corrupt entry cannot block selection. Exposed on the CLI as
+  **`--tle-name`**, which works with `--tle-file`, `--tle`, and `--tle-url` alike.
+- **Offline network test suite** (`tests/network_fetch.rs`, runs under
+  `cargo test --features network`): a loopback HTTP fixture server covers the fetch +
+  select path, redirect following, 404-without-retry (asserted by request count), the
+  size cap, and the HTTPS-only policy — deterministic and network-free, per the test
+  strategy in `http_plan.md` §4.
+
+### Changed
+
+- The `network` feature now carries real dependencies (`ureq`/rustls) and a working
+  fetch path; the "not implemented" stub error is gone.
+- Multi-object input to the `track` command (file, inline, or URL) now produces a
+  guided "select one by name or catalog number" error listing the objects, instead of a
+  generic line-count parse failure. Single-object input keeps the exact previous
+  behavior and diagnostics.
+
+[`ShadowState`]: https://docs.rs/ephemerust/latest/ephemerust/eclipse/enum.ShadowState.html
+
 ## [0.6.0] - 2026-07-28
 
 "Zero-cost abstractions" release: performance work that doubles as Rust teaching

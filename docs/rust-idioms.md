@@ -146,7 +146,41 @@ A useful discipline demonstrated by the v0.6.0 changes: **benchmark before, chan
 benchmark after, publish both numbers.** The [CHANGELOG](../CHANGELOG.md) records the
 before/after table for the release.
 
-## 7. A deliberate non-idiom: no unit newtypes (yet)
+## 7. Sum types model physics: `ShadowState`
+
+The 0.7.0 eclipse model (`eclipse.rs`) shows Rust enums doing what booleans cannot. A
+satellite is not simply "in shadow or not" — the Earth's shadow has two nested cones, so
+the domain has exactly three states, and the type says so:
+
+```rust
+pub enum ShadowState { Sunlit, Penumbra, Umbra }
+```
+
+Three things fall out of making the *type* match the *physics*:
+
+- **`match` is exhaustive.** Code that handles shadow states must handle all three; add a
+  fourth regime someday and every consumer fails to compile until it decides what to do.
+  A `bool` (or a pair of bools) would let the penumbra case silently fall through.
+- **Ordering is meaningful, not accidental.** The variants derive `Ord` in shadow-depth
+  order (`Sunlit < Penumbra < Umbra`), which is exactly what the entry/exit bisection in
+  `shadow_transitions` needs — "has the depth crossed boundary *k* yet?" is a comparison,
+  not a special case.
+- **The pure core is separately testable.** `shadow_state_from_vectors` takes two
+  position vectors and returns a `ShadowState` — no time, no ephemeris, no I/O — so the
+  geometry has direct unit tests with hand-checkable fixtures, independent of SGP4.
+
+## 8. Pay for what you use: feature-gated dependencies
+
+The `network` feature (0.7.0) demonstrates conditional compilation as a supply-chain
+discipline. The HTTP client and TLS stack (`ureq`, rustls) are declared
+`optional = true` and mapped through `network = ["dep:ureq"]`, and the whole `net`
+module sits behind `#[cfg(feature = "network")]`. A default `cargo build` compiles
+**zero** HTTP or TLS code — smaller binary, faster build, smaller audit surface — while
+`--features network` swaps in a real, bounded fetch client with no API contortions.
+This is the Cargo-native version of "zero-cost": the cost exists only for users who
+opted into the capability.
+
+## 9. A deliberate non-idiom: no unit newtypes (yet)
 
 The textbook type-system flex would be `Degrees(f64)` / `Radians(f64)` newtypes (or a
 units crate) so the compiler rejects passing radians where degrees are expected. Ephemerust
@@ -164,5 +198,7 @@ If the API grows more mixed-unit call sites, that decision should be revisited.
 | `static` tables + `const fn` | `planets.rs` — `MERCURY_VSOP87` … `NEPTUNE_VSOP87`, `vt`, `series` |
 | Standard traits | `planets.rs` — `Display`/`FromStr for Planet`; `satellite.rs` — `FromStr for Tle` |
 | Structured errors | `satellite.rs` — `TleError`; `lib.rs` — `AstroError` |
+| Physics-shaped enums | `eclipse.rs` — `ShadowState`, `shadow_transitions` |
+| Feature-gated deps | `Cargo.toml` — `network = ["dep:ureq"]`; `net.rs` |
 | Doctests | throughout; run `cargo test --doc` |
 | Benchmarks | `benches/core_operations.rs`; run `cargo bench` |

@@ -1,7 +1,8 @@
 //! CLI integration tests for the `track` command: human and JSON formats, modes, TLE sources,
 //! optional pass prediction and ground-track CSV, and teaching-oriented parse errors.
 //! By default eight tests run (`--tle-url` is absent without the `network` feature); with
-//! `cargo test --features network`, two additional tests cover the URL stub path.
+//! `cargo test --features network`, two additional tests here cover URL-flag policy and
+//! source exclusivity, and `tests/network_fetch.rs` exercises the fetch path offline.
 
 use std::process::Command;
 
@@ -74,12 +75,13 @@ fn track_format_json_all_is_valid_json_with_expected_keys() {
 
 #[cfg(feature = "network")]
 #[test]
-fn track_tle_url_only_errors_with_placeholder_message() {
+fn track_tle_url_refuses_plain_http_to_remote_hosts() {
+    // Scheme policy is checked before any connection is attempted, so this stays offline.
     let output = Command::new(binary())
         .args([
             "track",
             "--tle-url",
-            "https://celestrak.org/NORAD/elements/stations.txt",
+            "http://celestrak.org/NORAD/elements/stations.txt",
         ])
         .output()
         .expect("the ephemerust binary should run");
@@ -87,8 +89,8 @@ fn track_tle_url_only_errors_with_placeholder_message() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("not implemented"),
-        "expected placeholder message; stderr was:\n{stderr}"
+        stderr.contains("https"),
+        "expected HTTPS-only policy message; stderr was:\n{stderr}"
     );
 }
 

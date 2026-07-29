@@ -62,11 +62,13 @@ The project is structured in two phases:
 | Satellite look angles (TLE → observer)       | ✅ working (ENU / az–el–range–range-rate; see [plan](docs/satellite-tracking-plan.md)) |
 | Satellite pass prediction (`predict_passes`) | ✅ working (coarse scan + bisection; see [plan](docs/satellite-tracking-plan.md))        |
 | Satellite ground track (sampled subpoint + CSV/JSON) | ✅ working (`ground_track`; see [plan](docs/satellite-tracking-plan.md)) |
-| Satellite plan (M0–M9) — library polish & teaching | ✅ **signed off** ([plan](docs/satellite-tracking-plan.md): track CLI, passes, ground track, JSON, `network` stub, `sgp4_teaching`, docs) |
+| Satellite plan (M0–M9) — library polish & teaching | ✅ **signed off** ([plan](docs/satellite-tracking-plan.md): track CLI, passes, ground track, JSON, `sgp4_teaching`, docs) |
+| Earth-shadow (eclipse) model                 | ✅ working (conical umbra/penumbra, `eclipse::shadow_state` + entry/exit search; new in **0.7.0**) |
+| Live TLE fetch (`--tle-url`, CelesTrak)      | ✅ working with `--features network` (bounded HTTPS client + `--tle-name` selection; see [http_plan.md](http_plan.md)) |
 
 ## Install & build
 
-From [crates.io](https://crates.io/crates/ephemerust) (release **0.6.0**):
+From [crates.io](https://crates.io/crates/ephemerust) (release **0.7.0**):
 
 ```bash
 cargo install ephemerust          # CLI binary on your PATH
@@ -77,8 +79,8 @@ From this repository:
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (117 unit + 8 CLI integration + 20 doctests by default)
-cargo test --features network   # also runs `--tle-url` CLI integration tests
+cargo test             # run the test suite (138 unit + 8 CLI integration + 28 doctests by default)
+cargo test --features network   # adds the offline `--tle-url` fetch tests (loopback fixture server)
 cargo build --examples # compile `examples/` (library-only demos)
 cargo run -- --help    # list all commands
 ```
@@ -158,7 +160,20 @@ cargo run -- track --tle-file iss.tle
 Optional: `--predict-passes-hours <n>` with `--pass-min-elevation-deg` (default 10) lists
 passes for the **n** hours after the element-set epoch from the default (or supplied) observer.
 
-`--mode` selects **tle**, **state**, **subpoint**, **look**, **passes** (needs `--predict-passes-hours` > 0), **ground** (needs `--ground-track-hours` > 0), or **all** (default). `--format json` prints one JSON object (TLE summary, observer, state, subpoint, look angles, optional passes and ground-track samples). Add **`--afspc`** for WGS72 + legacy AFSPC propagation (Vallado / NORAD reference compatibility; default is WGS84 + IAU). The `--tle-url` flag is only available when the binary is built with **`--features network`**; it still returns a clear “not implemented” error until HTTP fetch exists. `--ground-track-json` still toggles CSV vs. JSON array for the ground-track section in **human** format.
+`--mode` selects **tle**, **state**, **subpoint**, **look**, **passes** (needs `--predict-passes-hours` > 0), **ground** (needs `--ground-track-hours` > 0), or **all** (default). `--format json` prints one JSON object (TLE summary, observer, state, subpoint, look angles, optional passes and ground-track samples). Add **`--afspc`** for WGS72 + legacy AFSPC propagation (Vallado / NORAD reference compatibility; default is WGS84 + IAU). `--ground-track-json` still toggles CSV vs. JSON array for the ground-track section in **human** format.
+
+With **`--features network`**, **`--tle-url`** fetches element-set text live over HTTPS
+(bounded client: timeouts, 2 MiB cap, no retries — please respect
+[CelesTrak's usage guidance](http_plan.md); GP data refreshes only ~every 2 h). Bulletins
+usually contain many objects, so pair it with **`--tle-name`** (case-insensitive name
+substring, or exact NORAD catalog number). `--tle-name` also works with `--tle-file`
+and `--tle`:
+
+```bash
+cargo run --features network -- track \
+  --tle-url "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=tle" \
+  --tle-name "ISS (ZARYA)" --mode subpoint
+```
 
 ## Examples (library)
 
@@ -191,9 +206,9 @@ Ephemerust follows [Semantic Versioning](https://semver.org/) and is intentional
 changes and the patch version marks compatible ones; a `1.0.0` release is reserved for a
 deliberately committed-stable API. The crate targets **Rust edition 2024** with a minimum
 supported Rust version (MSRV) of **1.88** (see `Cargo.toml` `rust-version`). Optional
-**`network`** feature: enables the `track` `--tle-url` flag (still a stub until HTTP TLE
-retrieval is implemented). Published on
-[crates.io](https://crates.io/crates/ephemerust) as **`0.6.0`** (pre-1.0 API).
+**`network`** feature: enables the `net` module and the `track` `--tle-url` flag (bounded
+HTTPS fetch via `ureq`/rustls; default builds carry no HTTP/TLS dependencies). Published on
+[crates.io](https://crates.io/crates/ephemerust) as **`0.7.0`** (pre-1.0 API).
 
 ## Changelog
 

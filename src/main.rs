@@ -82,10 +82,15 @@ enum Commands {
         /// Inline TLE text (quote the two/three lines; preserve line breaks)
         #[arg(short = 't', long)]
         tle: Option<String>,
-        /// Fetch TLE from this URL (stub only: still “not implemented”; requires `--features network`)
+        /// Fetch element-set text from this HTTPS URL (e.g. a CelesTrak bulletin; requires
+        /// `--features network`). Bounded fetch: no retries — respect provider rate guidance.
         #[cfg_attr(not(feature = "network"), arg(skip))]
         #[cfg_attr(feature = "network", arg(long = "tle-url"))]
         tle_url: Option<String>,
+        /// Select one object from a multi-TLE source by case-insensitive name substring,
+        /// or by exact NORAD catalog number (e.g. `--tle-name zarya` or `--tle-name 25544`)
+        #[arg(long = "tle-name")]
+        tle_name: Option<String>,
         /// What to print: `all` (default), `tle` summary only, `state`, `subpoint`, `look`,
         /// `passes` (requires `--predict-passes-hours` > 0), or `ground` (requires `--ground-track-hours` > 0)
         #[arg(long, value_enum, default_value_t = TrackMode::All)]
@@ -311,6 +316,7 @@ fn run() -> Result<()> {
             tle_file,
             tle,
             tle_url,
+            tle_name,
             mode,
             format,
             latitude,
@@ -325,6 +331,7 @@ fn run() -> Result<()> {
             tle_file,
             tle,
             tle_url,
+            tle_name,
             mode,
             format,
             latitude,
@@ -419,13 +426,27 @@ fn tle_summary_json(tle: &ephemerust::satellite::Tle) -> TleSummaryJson {
     }
 }
 
+/// Parses element-set text from any `track` source, honoring `--tle-name` selection.
+///
+/// Single-object text without a selector keeps the exact [`Tle::parse`] behavior (and its
+/// teaching-oriented diagnostics). Multi-object bulletins — the norm for URLs and catalog
+/// files — go through [`select_tle`](ephemerust::satellite::select_tle), whose errors list
+/// the available objects and point at `--tle-name`.
+fn parse_tle_text(text: &str, selector: Option<&str>) -> Result<ephemerust::satellite::Tle> {
+    let multiple_sets = text.lines().filter(|l| l.trim_start().starts_with("2 ")).count() > 1;
+    if selector.is_some() || multiple_sets {
+        ephemerust::satellite::select_tle(text, selector)
+    } else {
+        ephemerust::satellite::Tle::parse(text)
+    }
+}
+
 fn resolve_tle_input(
     tle_file: Option<String>,
     tle: Option<String>,
     tle_url: Option<String>,
+    tle_name: Option<String>,
 ) -> Result<ephemerust::satellite::Tle> {
-    use ephemerust::satellite::Tle;
-
     #[cfg(feature = "network")]
     const TLE_ONE_OF: &str = "provide exactly one of --tle-file, --tle, or --tle-url";
     #[cfg(not(feature = "network"))]
@@ -442,14 +463,29 @@ fn resolve_tle_input(
     if n > 1 {
         return Err(ephemerust::AstroError::SatelliteError(TLE_ONLY_ONE.into()));
     }
-    if tle_url.is_some() {
-        return Err(ephemerust::AstroError::SatelliteError(
-            "fetching a TLE from --tle-url is not implemented yet; use --tle or --tle-file.".into(),
-        ));
+
+    let selector = tle_name.as_deref();
+    if let Some(url) = tle_url {
+        #[cfg(feature = "network")]
+        {
+            log::info!("track: fetching element sets from {url}");
+            let text = ephemerust::net::fetch_tle_text(&url)?;
+            return parse_tle_text(&text, selector);
+        }
+        #[cfg(not(feature = "network"))]
+        {
+            let _ = url;
+            return Err(ephemerust::AstroError::SatelliteError(
+                "--tle-url requires a build with `--features network`".into(),
+            ));
+        }
     }
     match (tle_file, tle) {
-        (Some(path), None) => Tle::from_file(&path),
-        (None, Some(text)) => Tle::parse(&text),
+        (Some(path), None) => {
+            let text = std::fs::read_to_string(&path)?;
+            parse_tle_text(&text, selector)
+        }
+        (None, Some(text)) => parse_tle_text(&text, selector),
         _ => Err(ephemerust::AstroError::SatelliteError(
             "internal: TLE source resolution".into(),
         )),
@@ -461,6 +497,7 @@ fn run_track(
     tle_file: Option<String>,
     tle: Option<String>,
     tle_url: Option<String>,
+    tle_name: Option<String>,
     mode: TrackMode,
     format: TrackFormat,
     latitude: Option<f64>,
@@ -506,7 +543,7 @@ fn run_track(
         ));
     }
 
-    let parsed: Tle = resolve_tle_input(tle_file, tle, tle_url)?;
+    let parsed: Tle = resolve_tle_input(tle_file, tle, tle_url, tle_name)?;
     if afspc {
         log::info!("track: using AFSPC compatibility propagation (WGS72 + legacy sidereal/epoch)");
     }

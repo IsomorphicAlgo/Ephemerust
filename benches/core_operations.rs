@@ -14,6 +14,9 @@
 //!   `propagate` API (includes element parsing and propagator initialization).
 //! - **`ground_track_90min_60s`** — 90 samples over one ISS orbit; the classic
 //!   "propagate many times from one TLE" workload that dominates real tracking.
+//! - **`shadow_state_reused`** — sunlit/penumbra/umbra classification on a prebuilt
+//!   `Propagator`: one SGP4 step + the low-precision Sun vector + the conical-shadow
+//!   trig. The relevant cost for per-frame eclipse checks downstream.
 
 use chrono::{Duration, TimeZone, Utc};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -67,6 +70,16 @@ fn bench_propagate_reused(c: &mut Criterion) {
     });
 }
 
+/// Shadow classification per frame: propagation step + Sun vector + cone geometry.
+fn bench_shadow_state_reused(c: &mut Criterion) {
+    let tle = iss_tle();
+    let prop = Propagator::new(&tle).unwrap();
+    let t = Utc.with_ymd_and_hms(2020, 7, 12, 21, 46, 0).unwrap();
+    c.bench_function("shadow_state_reused", |b| {
+        b.iter(|| black_box(&prop).shadow_state(black_box(t)).unwrap())
+    });
+}
+
 fn bench_ground_track(c: &mut Criterion) {
     let tle = iss_tle();
     let start = Utc.with_ymd_and_hms(2020, 7, 12, 21, 16, 0).unwrap();
@@ -83,6 +96,7 @@ criterion_group!(
     bench_planet_position,
     bench_propagate_single,
     bench_propagate_reused,
+    bench_shadow_state_reused,
     bench_ground_track
 );
 criterion_main!(benches);

@@ -475,6 +475,179 @@ impl std::str::FromStr for Tle {
     }
 }
 
+/// One structurally detected element set inside a bulletin, before full validation.
+struct BulletinEntry<'a> {
+    name: Option<&'a str>,
+    line1: &'a str,
+    line2: &'a str,
+}
+
+impl BulletinEntry<'_> {
+    /// The raw NORAD catalog-number columns of line 1 (columns 3–7), trimmed.
+    fn catalog_str(&self) -> &str {
+        self.line1.get(2..7).unwrap_or("").trim()
+    }
+
+    fn display_name(&self) -> String {
+        match self.name {
+            Some(n) => n.to_string(),
+            None => format!("catalog {}", self.catalog_str()),
+        }
+    }
+}
+
+/// Splits a bulletin into structural element-set entries without validating checksums.
+///
+/// A line starting with `1 ` opens a set, the following line must start with `2 `, and any
+/// other non-blank line immediately before is taken as the object name (with the `0 ` title
+/// prefix used by some catalogs stripped).
+fn split_bulletin(text: &str) -> Vec<BulletinEntry<'_>> {
+    let mut entries = Vec::new();
+    let mut pending_name: Option<&str> = None;
+
+    let mut lines = text
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .peekable();
+
+    while let Some(line) = lines.next() {
+        // Rust 2024 let-chain: the structural test and the line-2 lookahead read as one condition.
+        if line.starts_with("1 ")
+            && let Some(l2) = lines.peek().copied().filter(|l| l.starts_with("2 "))
+        {
+            lines.next();
+            entries.push(BulletinEntry {
+                name: pending_name.take(),
+                line1: line,
+                line2: l2,
+            });
+            continue;
+        }
+        // Anything else is (potentially) the name line of the next set.
+        let trimmed = line.trim();
+        pending_name = Some(trimmed.strip_prefix("0 ").unwrap_or(trimmed).trim());
+    }
+    entries
+}
+
+/// Selects **one** element set from text that may contain many (a CelesTrak-style bulletin).
+///
+/// [`Tle::parse`] deliberately expects exactly one object, but real element-set sources —
+/// the CelesTrak `stations` bulletin, group files, or a locally saved catalog — concatenate
+/// dozens of 2-line or 3-line sets. This function bridges the two:
+///
+/// - **`selector: None`** — the text must contain exactly one element set (same contract as
+///   [`Tle::parse`], but tolerant of surrounding entries' absence).
+/// - **`selector: Some(s)`** — `s` is matched **case-insensitively as a substring** of each
+///   object's name line; a purely numeric `s` also matches the **exact NORAD catalog
+///   number**. Exactly one object must match.
+///
+/// Ambiguity, no match, and an empty bulletin are all reported with the available or
+/// matching object names in the message, so a user can immediately correct the selector.
+/// Only the *selected* entry is fully validated (checksums, field parsing); a corrupted
+/// unrelated entry elsewhere in a large bulletin does not prevent selection.
+///
+/// # Errors
+///
+/// [`AstroError::SatelliteError`] for empty/ambiguous/no-match selection;
+/// [`AstroError::Tle`] if the selected entry fails validation.
+///
+/// # Example
+///
+/// ```
+/// use ephemerust::satellite::select_tle;
+///
+/// let bulletin = "\
+/// ISS (ZARYA)
+/// 1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992
+/// 2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008
+/// ISS (NAUKA)
+/// 1 49044U 21066A   21198.53000000  .00001000  00000-0  30000-4 0  9993
+/// 2 49044  51.6400 200.0000 0002000  90.0000 270.0000 15.48000000    10";
+///
+/// let tle = select_tle(bulletin, Some("zarya"))?;
+/// assert_eq!(tle.catalog_number, 25544);
+///
+/// // A numeric selector matches the catalog number exactly.
+/// let tle = select_tle(bulletin, Some("49044"))?;
+/// assert_eq!(tle.name.as_deref(), Some("ISS (NAUKA)"));
+/// # Ok::<(), ephemerust::AstroError>(())
+/// ```
+pub fn select_tle(text: &str, selector: Option<&str>) -> Result<Tle> {
+    let entries = split_bulletin(text);
+    if entries.is_empty() {
+        return Err(AstroError::SatelliteError(
+            "no element sets found in the input: expected two 69-column data lines starting \
+             with `1 ` and `2 ` (optionally preceded by a name line)"
+                .into(),
+        ));
+    }
+
+    /// Formats up to 12 object names for an error message.
+    fn list_names(entries: &[&BulletinEntry<'_>]) -> String {
+        let mut names: Vec<String> = entries.iter().take(12).map(|e| e.display_name()).collect();
+        if entries.len() > names.len() {
+            names.push(format!("… and {} more", entries.len() - names.len()));
+        }
+        names.join(", ")
+    }
+
+    let chosen = match selector {
+        None => {
+            if entries.len() > 1 {
+                let all: Vec<&BulletinEntry<'_>> = entries.iter().collect();
+                return Err(AstroError::SatelliteError(format!(
+                    "the input contains {} element sets; select one by name or catalog number \
+                     (available: {})",
+                    entries.len(),
+                    list_names(&all)
+                )));
+            }
+            &entries[0]
+        }
+        Some(sel) => {
+            let sel_trimmed = sel.trim();
+            let sel_lower = sel_trimmed.to_lowercase();
+            let is_numeric = !sel_trimmed.is_empty() && sel_trimmed.bytes().all(|b| b.is_ascii_digit());
+
+            let matches: Vec<&BulletinEntry<'_>> = entries
+                .iter()
+                .filter(|e| {
+                    let name_hit = e
+                        .name
+                        .is_some_and(|n| n.to_lowercase().contains(&sel_lower));
+                    let catalog_hit = is_numeric
+                        && e.catalog_str().trim_start_matches('0')
+                            == sel_trimmed.trim_start_matches('0');
+                    name_hit || catalog_hit
+                })
+                .collect();
+
+            match matches.as_slice() {
+                [one] => *one,
+                [] => {
+                    let all: Vec<&BulletinEntry<'_>> = entries.iter().collect();
+                    return Err(AstroError::SatelliteError(format!(
+                        "no element set matches \"{sel_trimmed}\" (available: {})",
+                        list_names(&all)
+                    )));
+                }
+                many => {
+                    return Err(AstroError::SatelliteError(format!(
+                        "\"{sel_trimmed}\" matches {} element sets; be more specific \
+                         (matches: {})",
+                        many.len(),
+                        list_names(many)
+                    )));
+                }
+            }
+        }
+    };
+
+    Tle::from_lines(chosen.name, chosen.line1, chosen.line2)
+}
+
 /// Validates one element-set line: ASCII, length, line number, and checksum. Returns the
 /// canonical 69-column slice on success.
 fn validate_line(line: &str, line_no: u8) -> std::result::Result<&str, TleError> {
@@ -1481,6 +1654,15 @@ mod tests {
     use crate::coordinates::ecef_to_eci;
     use chrono::{Datelike, Duration, TimeZone, Timelike};
 
+    /// `Propagator` must be `Send + Sync`: downstream consumers (e.g. the Chronus Gateway's
+    /// Tokio pipeline) share one initialized propagator across async tasks by reference,
+    /// with no locking, because all propagation methods take `&self`.
+    #[test]
+    fn propagator_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Propagator>();
+    }
+
     // Canonical ISS (ZARYA) element set, reused as a fixed reference across the suite.
     const ISS_NAME: &str = "ISS (ZARYA)";
     const ISS_LINE1: &str = "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992";
@@ -1491,6 +1673,87 @@ mod tests {
         "1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927";
     const ISS_2008_LINE2: &str =
         "2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537";
+
+    /// A two-object 3LE bulletin: the 2020 and 2008 ISS sets under distinct display names.
+    fn two_object_bulletin() -> String {
+        format!(
+            "{ISS_NAME}\n{ISS_LINE1}\n{ISS_LINE2}\nISS 2008 ARCHIVE\n{ISS_2008_LINE1}\n{ISS_2008_LINE2}\n"
+        )
+    }
+
+    #[test]
+    fn select_tle_single_set_without_selector() {
+        let text = format!("{ISS_NAME}\n{ISS_LINE1}\n{ISS_LINE2}");
+        let tle = select_tle(&text, None).expect("single set needs no selector");
+        assert_eq!(tle.catalog_number, 25544);
+        assert_eq!(tle.name.as_deref(), Some(ISS_NAME));
+    }
+
+    #[test]
+    fn select_tle_multiple_sets_without_selector_lists_names() {
+        let err = select_tle(&two_object_bulletin(), None).expect_err("ambiguous");
+        let msg = err.to_string();
+        assert!(msg.contains("2 element sets"), "{msg}");
+        assert!(msg.contains(ISS_NAME) && msg.contains("ISS 2008 ARCHIVE"), "{msg}");
+    }
+
+    #[test]
+    fn select_tle_by_case_insensitive_name_substring() {
+        let tle = select_tle(&two_object_bulletin(), Some("2008 archive")).expect("match");
+        assert_eq!(tle.name.as_deref(), Some("ISS 2008 ARCHIVE"));
+        assert_eq!(tle.element_set_number, 292);
+    }
+
+    #[test]
+    fn select_tle_ambiguous_selector_reports_matches() {
+        // "iss" matches both objects.
+        let err = select_tle(&two_object_bulletin(), Some("iss")).expect_err("ambiguous");
+        let msg = err.to_string();
+        assert!(msg.contains("matches 2 element sets"), "{msg}");
+    }
+
+    #[test]
+    fn select_tle_no_match_lists_available() {
+        let err = select_tle(&two_object_bulletin(), Some("hubble")).expect_err("no match");
+        let msg = err.to_string();
+        assert!(msg.contains("no element set matches"), "{msg}");
+        assert!(msg.contains(ISS_NAME), "{msg}");
+    }
+
+    #[test]
+    fn select_tle_numeric_selector_matches_catalog_number() {
+        // Both objects share catalog 25544 → ambiguous by number...
+        let err = select_tle(&two_object_bulletin(), Some("25544")).expect_err("both are 25544");
+        assert!(err.to_string().contains("matches 2"), "{err}");
+
+        // ...but a 2-line-only bulletin (no names) can still be selected by number.
+        let unnamed = format!("{ISS_LINE1}\n{ISS_LINE2}");
+        let tle = select_tle(&unnamed, Some("25544")).expect("catalog match");
+        assert_eq!(tle.catalog_number, 25544);
+        assert!(tle.name.is_none());
+    }
+
+    #[test]
+    fn select_tle_empty_input_is_a_teaching_error() {
+        let err = select_tle("no elements here\njust prose\n", None).expect_err("no sets");
+        assert!(err.to_string().contains("no element sets found"), "{err}");
+    }
+
+    #[test]
+    fn select_tle_only_validates_the_selected_entry() {
+        // Corrupt the 2008 entry's checksum: selecting ZARYA must still succeed,
+        // while selecting the corrupted entry surfaces the validation error.
+        let corrupted = ISS_2008_LINE1.replace("  2927", "  2920");
+        let bulletin = format!(
+            "{ISS_NAME}\n{ISS_LINE1}\n{ISS_LINE2}\nISS 2008 ARCHIVE\n{corrupted}\n{ISS_2008_LINE2}\n"
+        );
+
+        let ok = select_tle(&bulletin, Some("zarya")).expect("unrelated corruption ignored");
+        assert_eq!(ok.catalog_number, 25544);
+
+        let err = select_tle(&bulletin, Some("archive")).expect_err("corrupted entry");
+        assert!(matches!(err, AstroError::Tle(_)), "expected TLE error, got {err}");
+    }
 
     // Vallado SGP4 verification satellite 00005 (Vanguard), with published reference outputs.
     const SAT5_LINE1: &str =

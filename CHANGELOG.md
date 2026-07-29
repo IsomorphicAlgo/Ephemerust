@@ -12,6 +12,13 @@ A `1.0.0` release is reserved for a deliberately committed-stable API.
 
 ## [Unreleased]
 
+### Changed
+
+- **crates.io discoverability**: added the `aerospace` and `aerospace::simulation` categories
+  (previously only `science` + `command-line-utilities`) and swapped the `orbital-mechanics`
+  keyword — already indexed via the crate description — for `tle`. Metadata-only; takes effect
+  with the next publish.
+
 ## [0.7.0] - 2026-07-29
 
 "Physics and freshness" release: the two highest-value gaps identified for downstream

@@ -9,8 +9,11 @@ license = "MIT"
 repository = "https://github.com/IsomorphicAlgo/ephemerust"
 documentation = "https://docs.rs/ephemerust"
 readme = "readme.md"
-keywords = ["astronomy", "orbital-mechanics", "satellite", "ephemeris", "sgp4"]
-categories = ["command-line-utilities", "science"]
+# crates.io discoverability. Keywords (max 5) favor search terms NOT already in the name or
+# description ("orbital-mechanics" is in the description, so its slot goes to "tle").
+# Categories (max 5) must come from the official slug list: https://crates.io/category_slugs
+keywords = ["astronomy", "tle", "satellite", "ephemeris", "sgp4"]
+categories = ["aerospace", "aerospace::simulation", "science", "command-line-utilities"]
 
 # docs.rs should document the optional `net` module too.
 [package.metadata.docs.rs]

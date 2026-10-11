@@ -48,16 +48,35 @@ along-track error. Use fresh TLEs (a few days old at most) when holding Doppler 
 > or ~450 Hz of Doppler at 437.5 MHz. Positions, azimuth, elevation and range were unaffected.
 > The old range-rate test's 0.25 km/s tolerance hid the error; the new tests bound it at 1 m/s.
 
+## Earth-orientation frames (`frames`, 1.1.0)
+
+`tests/frames_reference.rs` rotates 56 states (LEO, polar LEO, GEO and a high-eccentricity
+apogee, at seven epochs from 2000 to 2026 including one 30 s before a leap second) from GCRF and
+from TEME to ITRF and compares them with astropy/ERFA (the IAU SOFA library), feeding both sides
+the same IERS UT1−UTC and polar motion:
+
+| Path | Position (worst) | Velocity (worst) | Residual source |
+|------|------------------|------------------|-----------------|
+| GCRF → ITRF (IAU 2006 precession, IAU 2000B nutation, GAST, polar motion) | 6.8 cm | 0.25 mm/s | IAU 2000B vs 2000A nutation (~1 mas) |
+| TEME → ITRF (IAU 1982 GMST, polar motion) | 2.4 mm | 0.33 mm/s | astropy's finite-difference velocities |
+
+With Earth orientation supplied, satellite look angles match Skyfield to **0.04″ in direction,
+0.3 m in range and 0.7 mm/s in range rate** (`tests/external_reference.rs`, same WGS72 constants
+and UT1 as Skyfield) — down from 0.34′ / 75 m / 0.41 m/s with UT1 = UTC.
+
 ## Limitations
 
 - **Simplified Sun/Moon models** — not full VSOP87 / ELP2000.
-- **No precession/nutation** — ECEF/ECI assumes the J2000.0 epoch with no
-  precession/nutation corrections (IAU-76/FK5 and IAU-2000/2006 documented for the future).
-  This limits Sun/Moon/planet and star work to the arcminute level. It does **not** limit
-  satellites: SGP4's TEME frame is already "of date", and TEME → ECEF by a GMST rotation is the
-  standard Vallado bridge.
-- **UT1 is taken as UTC and polar motion is ignored** — at most ~0.9 s of Earth rotation
-  (≈ 0.4 km at the equator) and ~10 m respectively; both are far below TLE error.
+- **Precession/nutation only in `frames`** — the `coordinates` ECEF/ECI helpers and the
+  Sun/Moon/planet pipeline assume the J2000.0 epoch with no precession/nutation, which limits
+  them to the arcminute level. The [`frames`](../src/frames.rs) module (1.1.0) applies IAU 2006
+  precession + IAU 2000B nutation for GCRF/EME2000 ↔ ITRF. Satellites from SGP4 never needed
+  them: TEME is already "of date", and TEME → ECEF by a GMST rotation is the standard Vallado
+  bridge.
+- **Earth orientation is opt-in** — `look_angles` and friends take UT1 = UTC with no polar
+  motion (at most ~0.9 s of Earth rotation ≈ 0.4 km at the equator, and ~10 m); pass IERS
+  Bulletin A values through `Propagator::look_angles_with_eop` / `frames::inertial_to_itrf` to
+  remove both.
 - **No light-time correction** for planetary positions.
 - **Refraction is opt-in.** No function applies atmospheric refraction implicitly; add
   `coordinates::refraction_deg` to a geometric elevation to get the apparent one.
@@ -74,10 +93,10 @@ along-track error. Use fresh TLEs (a few days old at most) when holding Doppler 
 ## Future enhancements
 
 - Full/truncated VSOP87 coefficients for all planets and Earth.
-- IAU-2000/2006 precession–nutation for high-precision ECEF/ECI.
-- Optional Earth-orientation parameters (UT1−UTC, polar motion) input.
+- IAU 2000A (full) nutation and the CIO-based chain, for sub-centimetre work.
+- Reading IERS Bulletin A / finals2000A files directly instead of passing values by hand.
 - Light-time and aberration corrections for planetary positions.
 - More advanced orbital propagation; asteroid/comet positions; stellar positions and proper
-  motion; additional frames (GCRS, ITRS).
+  motion; TOD/MOD frames.
 
 See the [roadmap](roadmap.md) for how these fit into the larger project direction.

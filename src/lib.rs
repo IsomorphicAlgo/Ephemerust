@@ -29,6 +29,7 @@
 //! | [`coordinates`] | RA/Dec ↔ Alt/Az, ECEF ↔ ECI, and WGS84 ECEF ↔ geodetic |
 //! | [`celestial`] | Sun/Moon position and rise/set; dispatch to planets |
 //! | [`eclipse`] | Earth-shadow geometry: sunlit / penumbra / umbra classification and entry/exit search |
+//! | [`frames`] | Earth orientation (UT1−UTC, polar motion), leap seconds, GCRF/EME2000/TEME ↔ ITRF with IAU 2006/2000B precession–nutation |
 //! | [`orbital`] | Kepler's equation, orbital period, elements → state vectors |
 //! | [`planets`] | VSOP87 planetary ephemeris |
 //! | [`satellite`] | TLE / SGP4 propagation, TEME → ECEF → geodetic, look angles, passes, ground track |
@@ -38,11 +39,12 @@
 //!
 //! Angles are in degrees and times in UTC unless a function states otherwise; right ascension
 //! and sidereal time are in hours; distances follow each module's stated unit (kilometres for
-//! orbital/satellite state, metres for ECEF/ECI). No precession or nutation is applied, which
-//! bounds Sun/Moon/planet accuracy at roughly the arcminute level. Satellite look angles do not
-//! need them (SGP4's TEME frame is already "of date"): they agree with an independent IAU 2000
-//! reference to well under an arcminute, tens of metres in range and under 1 m/s in range rate
-//! for the same TLE — see `docs/accuracy-and-limits.md` and `tests/external_reference.rs`.
+//! orbital/satellite state, metres for ECEF/ECI). No precession or nutation is applied outside
+//! [`frames`], which bounds Sun/Moon/planet accuracy at roughly the arcminute level. Satellite
+//! look angles do not need them (SGP4's TEME frame is already "of date"): they agree with an
+//! independent IAU 2000 reference to well under an arcminute, tens of metres in range and under
+//! 1 m/s in range rate for the same TLE, and to 0.04″ / 0.3 m / 0.7 mm/s when Earth orientation
+//! is supplied — see `docs/accuracy-and-limits.md` and `tests/external_reference.rs`.
 //!
 //! ## API stability, MSRV, and Cargo features
 //!
@@ -91,6 +93,7 @@
 pub mod celestial;
 pub mod coordinates;
 pub mod eclipse;
+pub mod frames;
 #[cfg(feature = "network")]
 pub mod net;
 pub mod orbital;
@@ -174,6 +177,9 @@ pub use celestial::{CelestialObject, ObserverLocation, RiseSetTimes, sun_vector_
 // Re-export Earth-shadow (eclipse) types
 pub use eclipse::{ShadowState, ShadowTransition, shadow_state, shadow_transitions};
 
+// Re-export Earth-orientation and frame types
+pub use frames::{EarthOrientation, InertialFrame};
+
 // Re-export planet types
 pub use planets::{Planet, calculate_planet_position};
 
@@ -183,6 +189,7 @@ pub use satellite::{
     TleError, ecef_to_geodetic, ground_track, ground_track_to_csv, ground_track_to_json,
     look_angles, look_angles_with_model, predict_passes, predict_passes_with_model, propagate,
     propagate_with_model, select_tle, subpoint, subpoint_with_model, teme_to_ecef,
+    topocentric_look_angles,
 };
 
 // Re-export time functions

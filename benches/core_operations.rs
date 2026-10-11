@@ -17,13 +17,18 @@
 //! - **`shadow_state_reused`** — sunlit/penumbra/umbra classification on a prebuilt
 //!   `Propagator`: one SGP4 step + the low-precision Sun vector + the conical-shadow
 //!   trig. The relevant cost for per-frame eclipse checks downstream.
+//! - **`look_angles_reused`** / **`look_angles_with_eop_reused`** — topocentric look angles on a
+//!   prebuilt `Propagator`, without and with Earth orientation (IAU 1982 GMST + polar motion).
+//! - **`gcrf_to_itrf`** — one state through IAU 2006 precession + IAU 2000B nutation + GAST +
+//!   polar motion (the per-sample cost of an operator ephemeris in GCRF/EME2000).
 
 use chrono::{Duration, TimeZone, Utc};
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
+use ephemerust::frames::{EarthOrientation, InertialFrame, inertial_to_itrf};
 use ephemerust::satellite::{Propagator, Tle, ground_track, propagate};
-use ephemerust::{Planet, calculate_planet_position, julian_date};
+use ephemerust::{ObserverLocation, Planet, calculate_planet_position, julian_date};
 
 // Canonical ISS (ZARYA) element set, same fixture as the unit-test suite.
 // Epoch: 2020-07-12 ~21:16 UTC (day 194.88612269 of 2020).
@@ -80,6 +85,46 @@ fn bench_shadow_state_reused(c: &mut Criterion) {
     });
 }
 
+/// Look angles per frame, with and without Earth orientation parameters.
+fn bench_look_angles(c: &mut Criterion) {
+    let tle = iss_tle();
+    let prop = Propagator::new(&tle).unwrap();
+    let t = Utc.with_ymd_and_hms(2020, 7, 12, 21, 46, 0).unwrap();
+    let obs = ObserverLocation {
+        latitude: 47.9088,
+        longitude: -122.2503,
+        elevation: 0.0,
+    };
+    let eop = EarthOrientation::new(-0.2273, 0.1875, 0.4171).unwrap();
+    c.bench_function("look_angles_reused", |b| {
+        b.iter(|| black_box(&prop).look_angles(black_box(t), obs).unwrap())
+    });
+    c.bench_function("look_angles_with_eop_reused", |b| {
+        b.iter(|| {
+            black_box(&prop)
+                .look_angles_with_eop(black_box(t), obs, &eop)
+                .unwrap()
+        })
+    });
+}
+
+/// One GCRF state rotated to ITRF (precession, nutation, sidereal time, polar motion).
+fn bench_gcrf_to_itrf(c: &mut Criterion) {
+    let t = Utc.with_ymd_and_hms(2020, 7, 12, 21, 46, 0).unwrap();
+    let eop = EarthOrientation::new(-0.2273, 0.1875, 0.4171).unwrap();
+    c.bench_function("gcrf_to_itrf", |b| {
+        b.iter(|| {
+            inertial_to_itrf(
+                InertialFrame::Gcrf,
+                black_box(t),
+                [6778.137, 0.0, 0.0],
+                [0.0, 4.763, 6.010],
+                &eop,
+            )
+        })
+    });
+}
+
 fn bench_ground_track(c: &mut Criterion) {
     let tle = iss_tle();
     let start = Utc.with_ymd_and_hms(2020, 7, 12, 21, 16, 0).unwrap();
@@ -97,6 +142,8 @@ criterion_group!(
     bench_propagate_single,
     bench_propagate_reused,
     bench_shadow_state_reused,
+    bench_look_angles,
+    bench_gcrf_to_itrf,
     bench_ground_track
 );
 criterion_main!(benches);

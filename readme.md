@@ -29,8 +29,9 @@ an independent IAU 2000 reference (Skyfield) and agree to within a third of an a
 API is stable under semver. Building those checks is how 1.0 caught and fixed a real
 range-rate bug, which is exactly why they exist. It isn't flight software, and the TLEs
 themselves limit real-world accuracy to around a kilometre, but the math between the TLE and
-your antenna should be something you can trust. Next on the list: Earth-orientation data and
-precise ephemeris inputs for when TLEs aren't good enough.
+your antenna should be something you can trust. As of 1.1 it also handles Earth-orientation
+data and the precise reference frames that operator ephemerides use, for when a TLE isn't good
+enough.
 
 ## Acknowledgements
 
@@ -65,6 +66,9 @@ layer in between:
 
 - **Time** — Julian Date, Greenwich and local sidereal time.
 - **Coordinates** — RA/Dec ↔ Alt/Az, ECEF ↔ ECI, WGS84 geodetic, opt-in atmospheric refraction.
+- **Reference frames** — Earth orientation (UT1−UTC, polar motion), leap seconds, and
+  GCRF / EME2000 / TEME ↔ ITRF with IAU 2006 precession and IAU 2000B nutation, for precise
+  ephemerides (e.g. CCSDS OEM) as well as TLEs.
 - **Sun, Moon and planets** — positions and rise/set times (planets via truncated VSOP87D).
 - **Orbital mechanics** — Kepler's equation, period, elements → state vectors.
 - **Satellites** — TLE parsing with teaching-oriented error messages, SGP4 propagation,
@@ -99,11 +103,12 @@ project, which uses Ephemerust as a dependency; see the [roadmap](docs/roadmap.m
 | Earth-shadow (eclipse) model                 | ✅ working (conical umbra/penumbra, `eclipse::shadow_state` + entry/exit search; since **0.7.0**) |
 | Live TLE fetch (`--tle-url`, CelesTrak)      | ✅ working with `--features network` (bounded HTTPS client + `--tle-name` selection; see [http_plan.md](http_plan.md)) |
 | Atmospheric refraction (`refraction_deg`)    | ✅ new in **1.0.0** (Sæmundsson standard atmosphere, optional pressure/temperature) |
+| Earth orientation & frames (`frames`)        | ✅ new in **1.1.0** (UT1−UTC, polar motion, leap seconds; GCRF/EME2000/TEME ↔ ITRF with IAU 2006/2000B, within 7 cm of ERFA) |
 | Independent validation (Skyfield reference)  | ✅ look angles within 0.34′, range within 75 m, range rate within 0.41 m/s of an IAU 2000 reference ([accuracy](docs/accuracy-and-limits.md)) |
 
 ## Install & build
 
-From [crates.io](https://crates.io/crates/ephemerust) (release **1.0.0**):
+From [crates.io](https://crates.io/crates/ephemerust) (release **1.1.0**):
 
 ```bash
 cargo install ephemerust          # CLI binary on your PATH
@@ -115,7 +120,7 @@ From this repository:
 
 ```bash
 cargo build            # build
-cargo test             # run the test suite (unit, CLI integration, Skyfield cross-check, doctests)
+cargo test             # run the test suite (unit, CLI integration, Skyfield + ERFA cross-checks, doctests)
 cargo test --features network   # adds the offline `--tle-url` fetch tests (loopback fixture server)
 cargo build --examples # compile `examples/` (library-only demos)
 cargo run -- --help    # list all commands
@@ -295,6 +300,12 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
   Sun/Moon models and atmospheric refraction (ch. 16).
 - **Atmospheric refraction** — Sæmundsson, Þ. (1986), "Astronomical Refraction", *Sky and
   Telescope* 72, 70.
+- **Precession, nutation and Earth orientation** — Capitaine, N., Wallace, P. T. & Chapront, J.
+  (2003), IAU 2006 precession (A&A 412, 567); Hilton, J. L. et al. (2006), Fukushima–Williams
+  angles; McCarthy, D. D. & Luzum, B. J. (2003), *An abridged model of the precession-nutation of
+  the celestial pole* (IAU 2000B, Celest. Mech. 85, 37); Petit, G. & Luzum, B. (eds.) (2010),
+  *IERS Conventions*, IERS Technical Note 36; IERS Bulletins A and C (Earth orientation, leap
+  seconds).
 - **Astrodynamics** — Vallado, D. A., *Fundamentals of Astrodynamics and Applications*; the
   TEME → ECEF bridge and the conical Earth-shadow model.
 - **IAU conventions** for coordinate frames and time scales.
@@ -303,7 +314,11 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 - [Skyfield](https://rhodesmill.org/skyfield/) (Brandon Rhodes) — independent IAU 2000
   reference for the satellite look-angle cross-check (`tests/data/skyfield_iss_everett.csv`),
-  and the design inspiration for Ephemerust.
+  and the design inspiration for Ephemerust; its bundled IAU 2000 nutation table is the source
+  of the 77-term IAU 2000B series in `src/frames_nutation_table.rs`.
+- [astropy](https://www.astropy.org/) / [pyerfa](https://github.com/liberfa/pyerfa) (ERFA, the
+  open implementation of the IAU's SOFA library) — reference for the frame-rotation tests
+  (`tests/data/astropy_frames.csv`).
 - [JPL Horizons](https://ssd.jpl.nasa.gov/horizons/) — ephemeris data used to validate the
   planet positions.
 - [CelesTrak](https://celestrak.org/) (Dr. T. S. Kelso) — TLE format documentation and orbital

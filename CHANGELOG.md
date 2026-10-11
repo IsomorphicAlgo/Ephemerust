@@ -14,6 +14,37 @@ version carried breaking changes.)
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-11
+
+Earth orientation and precise reference frames: everything needed to go beyond TLE accuracy,
+added without breaking the 1.0 API.
+
+### Added
+
+- **`frames` module.** `EarthOrientation` (UT1−UTC and polar motion from IERS Bulletin A, with
+  validation that catches milliseconds/milliarcseconds entered by mistake), `InertialFrame`
+  (`Gcrf`, `Eme2000`, `Teme`), `inertial_to_itrf` / `itrf_to_inertial` for position and velocity
+  (velocity includes the Earth-rotation transport term), and the leap-second table
+  (`tai_minus_utc_s`, `tt_minus_utc_s`). GCRF/EME2000 use IAU 2006 precession (Fukushima–Williams
+  angles), IAU 2000B nutation (77 luni-solar terms), the IERS 2003 frame bias and Greenwich
+  apparent sidereal time; TEME uses the IAU 1982 GMST of Vallado et al. (2006). All paths apply
+  polar motion. Validated against astropy/ERFA (`tests/frames_reference.rs`): 6.8 cm / 0.25 mm/s
+  worst case for GCRF → ITRF, 2.4 mm for TEME → ITRF.
+- **`Propagator::look_angles_with_eop`** — look angles through the Earth-orientation-aware TEME
+  → ITRF rotation. With Skyfield's own UT1 and WGS72 constants it matches Skyfield to 0.04″,
+  0.3 m and 0.7 mm/s (`tests/external_reference.rs`), versus 0.34′ / 75 m / 0.41 m/s for
+  `look_angles` (UT1 = UTC).
+- **`satellite::topocentric_look_angles`** — azimuth, elevation, range and range rate for any
+  Earth-fixed state (km, km/s), e.g. an operator ephemeris rotated with `inertial_to_itrf`.
+- Benchmarks `look_angles_reused` (~0.67 µs), `look_angles_with_eop_reused` (~0.60 µs) and
+  `gcrf_to_itrf` (~2.2 µs).
+
+### Changed
+
+- `Propagator::look_angles` now shares its observer-side code with `topocentric_look_angles`
+  (no numerical change).
+- Docs: accuracy page gains an Earth-orientation section; roadmap and readme updated.
+
 ## [1.0.0] - 2026-10-11
 
 First stable release. The public API is now covered by Semantic Versioning, the satellite

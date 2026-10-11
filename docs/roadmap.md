@@ -40,10 +40,16 @@ feature so library users skip CLI dependencies, `#[non_exhaustive]` on errors an
 types, `forbid(unsafe_code)`, MSRV 1.89 (shared with Chronus Gateway), and CI. See the
 [CHANGELOG](../CHANGELOG.md).
 
+**1.1.0 — Earth orientation & reference frames (October 2026) — done.** New `frames` module:
+UT1−UTC and polar motion (`EarthOrientation`), the leap-second table, and GCRF/EME2000/TEME ↔
+ITRF with IAU 2006 precession + IAU 2000B nutation, validated against astropy/ERFA to 7 cm; plus
+`Propagator::look_angles_with_eop` and `topocentric_look_angles` for states that do not come
+from a TLE. Chronus Gateway uses these for its CCSDS OEM backend.
+
 ### Remaining Phase 1 work
 
 - Satellite tracking follow-ups from [satellite-tracking-plan.md — Future work](satellite-tracking-plan.md#future-work) (Space-Track authenticated fetch if ever needed; external validation landed in 1.0.0).
-- Optional Earth-orientation input (UT1−UTC, polar motion) and a CCSDS OEM ephemeris source as an alternative to TLEs, for users who need better than TLE-level accuracy.
+- Read IERS Bulletin A / finals files directly (today Earth orientation is passed by value).
 - Extend the VSOP87 series with more terms to push accuracy toward the arcsecond level.
 - Optional: a dedicated `planets` subcommand for listing/comparing multiple planets.
 - Longer term: advanced orbital propagation; asteroid/comet positions; stellar positions

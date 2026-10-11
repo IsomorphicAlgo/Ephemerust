@@ -53,6 +53,7 @@
 
 use crate::celestial::ObserverLocation;
 use crate::coordinates::{Ecef, Eci, ecef_to_geodetic_wgs84, eci_to_ecef, geodetic_wgs84_to_ecef};
+use crate::frames::{EarthOrientation, InertialFrame, inertial_to_itrf};
 use crate::{AstroError, Result};
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use serde::Serialize;
@@ -1026,47 +1027,142 @@ impl Propagator {
     ) -> Result<LookAngles> {
         let state = self.propagate(time)?;
         let r_sat = teme_to_ecef(&state, time)?;
-        let r_obs =
-            geodetic_wgs84_to_ecef(observer.latitude, observer.longitude, observer.elevation)?;
-
-        let rho_x = r_sat.x - r_obs.x;
-        let rho_y = r_sat.y - r_obs.y;
-        let rho_z = r_sat.z - r_obs.z;
-
         // Relative velocity in the Earth-fixed frame. The observer is fixed to the ground, so
         // its ECEF velocity is zero: Earth rotation is already accounted for by expressing the
         // satellite's velocity in ECEF (see `teme_velocity_to_ecef_m_s`).
         let v_sat = teme_velocity_to_ecef_m_s(&state, time, &r_sat)?;
-        let rdx = v_sat[0];
-        let rdy = v_sat[1];
-        let rdz = v_sat[2];
-
-        let (e, n, u) =
-            ecef_delta_to_enu(observer.latitude, observer.longitude, rho_x, rho_y, rho_z);
-        let range_m = (e * e + n * n + u * u).sqrt();
-        const MIN_RANGE_M: f64 = 10.0;
-        if !range_m.is_finite() || range_m < MIN_RANGE_M {
-            return Err(AstroError::CalculationError(format!(
-                "observer-to-satellite range ({range_m:.3} m) is too small for stable azimuth/elevation"
-            )));
-        }
-
-        let horizontal = (e * e + n * n).sqrt();
-        let elevation_deg = u.atan2(horizontal).to_degrees();
-        let mut azimuth_deg = e.atan2(n).to_degrees();
-        if azimuth_deg < 0.0 {
-            azimuth_deg += 360.0;
-        }
-
-        let range_rate_m_s = (rho_x * rdx + rho_y * rdy + rho_z * rdz) / range_m;
-
-        Ok(LookAngles {
-            azimuth_deg,
-            elevation_deg,
-            range_km: range_m / 1000.0,
-            range_rate_km_s: range_rate_m_s / 1000.0,
-        })
+        look_angles_from_ecef_m(r_sat, v_sat, observer)
     }
+
+    /// Like [`Propagator::look_angles`], but rotates TEME to the Earth-fixed frame with
+    /// **Earth orientation parameters**: UT1−UTC for the Earth's actual rotation angle and
+    /// polar motion for the wobble of its axis (see [`crate::frames`]).
+    ///
+    /// Use it when daily IERS Bulletin A values are available. The rotation uses the full IAU
+    /// 1982 GMST polynomial, so even with [`EarthOrientation::default`] (all zero) the result can
+    /// differ from [`Propagator::look_angles`] by a few metres; with real EOP it agrees with an
+    /// independent IAU 2000 reference more closely (see `tests/external_reference.rs`).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Propagator::look_angles`].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ephemerust::frames::EarthOrientation;
+    /// use ephemerust::{ObserverLocation, Propagator, Tle};
+    ///
+    /// let tle = Tle::parse(
+    ///     "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992\n\
+    ///      2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008",
+    /// )?;
+    /// let prop = Propagator::new(&tle)?;
+    /// let obs = ObserverLocation { latitude: 47.9088, longitude: -122.2503, elevation: 0.0 };
+    /// let eop = EarthOrientation::new(-0.2273, 0.1875, 0.4171)?; // IERS, 2020-07-12
+    /// let la = prop.look_angles_with_eop(tle.epoch, obs, &eop)?;
+    /// assert!((0.0..360.0).contains(&la.azimuth_deg));
+    /// # Ok::<(), ephemerust::AstroError>(())
+    /// ```
+    pub fn look_angles_with_eop(
+        &self,
+        time: DateTime<Utc>,
+        observer: ObserverLocation,
+        eop: &EarthOrientation,
+    ) -> Result<LookAngles> {
+        let state = self.propagate(time)?;
+        let (r, v) = inertial_to_itrf(
+            InertialFrame::Teme,
+            time,
+            state.position_km,
+            state.velocity_km_s,
+            eop,
+        );
+        topocentric_look_angles(r, v, observer)
+    }
+}
+
+/// Topocentric look angles (azimuth, elevation, range, range rate) of an object whose
+/// **Earth-fixed** (ITRF/ECEF) position and velocity are known, seen from a ground observer.
+///
+/// This is the observer-side half of [`look_angles`], exposed for states that do not come from a
+/// TLE — for example an operator-supplied ephemeris rotated to ITRF with
+/// [`crate::frames::inertial_to_itrf`]. Position is in kilometres and velocity in kilometres per
+/// second, both Earth-fixed (the velocity must already be relative to the rotating Earth, as
+/// returned by `inertial_to_itrf`). Range rate is positive while the object recedes.
+///
+/// # Errors
+///
+/// [`AstroError::InvalidCoordinate`] for an invalid observer location, and
+/// [`AstroError::CalculationError`] if the slant range is below ~10 m.
+///
+/// # Example
+///
+/// ```
+/// use ephemerust::ObserverLocation;
+/// use ephemerust::satellite::topocentric_look_angles;
+///
+/// // A point 500 km straight above a station on the equator at longitude 0.
+/// let obs = ObserverLocation { latitude: 0.0, longitude: 0.0, elevation: 0.0 };
+/// let la = topocentric_look_angles([6878.137, 0.0, 0.0], [0.0, 7.6, 0.0], obs)?;
+/// assert!((la.elevation_deg - 90.0).abs() < 1e-6);
+/// assert!((la.range_km - 500.0).abs() < 1e-6);
+/// assert!(la.range_rate_km_s.abs() < 1e-9); // moving sideways: no line-of-sight motion
+/// # Ok::<(), ephemerust::AstroError>(())
+/// ```
+pub fn topocentric_look_angles(
+    position_itrf_km: [f64; 3],
+    velocity_itrf_km_s: [f64; 3],
+    observer: ObserverLocation,
+) -> Result<LookAngles> {
+    let r = Ecef {
+        x: position_itrf_km[0] * 1000.0,
+        y: position_itrf_km[1] * 1000.0,
+        z: position_itrf_km[2] * 1000.0,
+    };
+    let v = velocity_itrf_km_s.map(|c| c * 1000.0);
+    look_angles_from_ecef_m(r, v, observer)
+}
+
+/// Shared ENU look-angle math: Earth-fixed satellite position (m) and velocity (m/s).
+fn look_angles_from_ecef_m(
+    r_sat: Ecef,
+    v_sat: [f64; 3],
+    observer: ObserverLocation,
+) -> Result<LookAngles> {
+    let r_obs = geodetic_wgs84_to_ecef(observer.latitude, observer.longitude, observer.elevation)?;
+    let rho_x = r_sat.x - r_obs.x;
+    let rho_y = r_sat.y - r_obs.y;
+    let rho_z = r_sat.z - r_obs.z;
+
+    let rdx = v_sat[0];
+    let rdy = v_sat[1];
+    let rdz = v_sat[2];
+
+    let (e, n, u) = ecef_delta_to_enu(observer.latitude, observer.longitude, rho_x, rho_y, rho_z);
+    let range_m = (e * e + n * n + u * u).sqrt();
+    const MIN_RANGE_M: f64 = 10.0;
+    if !range_m.is_finite() || range_m < MIN_RANGE_M {
+        return Err(AstroError::CalculationError(format!(
+            "observer-to-satellite range ({range_m:.3} m) is too small for stable azimuth/elevation"
+        )));
+    }
+
+    let horizontal = (e * e + n * n).sqrt();
+    let elevation_deg = u.atan2(horizontal).to_degrees();
+    let mut azimuth_deg = e.atan2(n).to_degrees();
+    if azimuth_deg < 0.0 {
+        azimuth_deg += 360.0;
+    }
+
+    let range_rate_m_s = (rho_x * rdx + rho_y * rdy + rho_z * rdz) / range_m;
+
+    Ok(LookAngles {
+        azimuth_deg,
+        elevation_deg,
+        range_km: range_m / 1000.0,
+        range_rate_km_s: range_rate_m_s / 1000.0,
+    })
 }
 
 /// Propagates a TLE to the given UTC time and returns the [`TemeState`].

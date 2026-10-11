@@ -131,7 +131,7 @@ impl std::str::FromStr for Planet {
 /// - C: Frequency (coefficient for time variable)
 /// - t: Time in Julian centuries from J2000.0
 #[derive(Debug, Clone, Copy)]
-pub struct Vsop87Term {
+pub(crate) struct Vsop87Term {
     /// Amplitude A
     pub amplitude: f64,
     /// Phase B (in radians)
@@ -154,7 +154,7 @@ pub struct Vsop87Term {
 /// compile time (see the per-planet `static` tables in this module), so evaluating a
 /// series never allocates. An empty slice means the sub-series is not used.
 #[derive(Debug, Clone, Copy)]
-pub struct Vsop87Series {
+pub(crate) struct Vsop87Series {
     /// Series L0, B0, or R0 (constant term)
     pub series_0: &'static [Vsop87Term],
     /// Series L1, B1, or R1 (linear term)
@@ -174,7 +174,7 @@ pub struct Vsop87Series {
 /// Contains three VSOP87Series: one for longitude (L), one for latitude (B),
 /// and one for radius (R).
 #[derive(Debug, Clone, Copy)]
-pub struct PlanetVsop87Data {
+pub(crate) struct PlanetVsop87Data {
     /// Longitude series (L0, L1, L2, L3, L4, L5)
     pub longitude: Vsop87Series,
     /// Latitude series (B0, B1, B2, B3, B4)
@@ -188,7 +188,7 @@ pub struct PlanetVsop87Data {
 /// These are the raw output from VSOP87 calculations before conversion
 /// to equatorial coordinates (RA/Dec).
 #[derive(Debug, Clone, Copy)]
-pub struct HeliocentricEcliptic {
+pub(crate) struct HeliocentricEcliptic {
     /// Ecliptic longitude (L) in radians
     pub longitude: f64,
     /// Ecliptic latitude (B) in radians

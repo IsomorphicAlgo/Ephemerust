@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 //! # Ephemerust
@@ -38,20 +39,32 @@
 //! Angles are in degrees and times in UTC unless a function states otherwise; right ascension
 //! and sidereal time are in hours; distances follow each module's stated unit (kilometres for
 //! orbital/satellite state, metres for ECEF/ECI). No precession or nutation is applied, which
-//! bounds accuracy at roughly the arcminute level — see `docs/accuracy-and-limits.md`.
+//! bounds Sun/Moon/planet accuracy at roughly the arcminute level. Satellite look angles do not
+//! need them (SGP4's TEME frame is already "of date"): they agree with an independent IAU 2000
+//! reference to well under an arcminute, tens of metres in range and under 1 m/s in range rate
+//! for the same TLE — see `docs/accuracy-and-limits.md` and `tests/external_reference.rs`.
 //!
 //! ## API stability, MSRV, and Cargo features
 //!
-//! The project is in the **`0.x`** semver range: minor releases may include breaking API
-//! changes (see [`CHANGELOG.md`](https://github.com/IsomorphicAlgo/ephemerust/blob/master/CHANGELOG.md)).
-//! The **minimum supported Rust version (MSRV)** is declared in the crate `Cargo.toml`
-//! (`package.rust-version`) and summarized in the top-level readme.
+//! From **1.0.0** the public API follows [Semantic Versioning](https://semver.org/): breaking
+//! changes only in a new major version (see
+//! [`CHANGELOG.md`](https://github.com/IsomorphicAlgo/ephemerust/blob/master/CHANGELOG.md)).
+//! Error enums, models and result structs are `#[non_exhaustive]`, so new variants or output
+//! fields can arrive in minor releases; input structs (`ObserverLocation`, `RaDec`, `Ecef`, …)
+//! stay constructible with literal syntax. **Numerical results may improve** in minor or patch
+//! releases when a correction makes them closer to physical truth; such changes are always
+//! called out in the changelog. `chrono`, `serde` and (via [`sgp4_teaching`]) `sgp4` types
+//! appear in the public API, so their major versions are pinned for the life of 1.x.
 //!
-//! Optional Cargo features:
+//! The **minimum supported Rust version (MSRV)** is **1.89**, declared as
+//! `package.rust-version`. Raising it is done only in a minor release and noted in the
+//! changelog.
+//!
+//! Cargo features:
 //!
 //! | Feature | Purpose |
 //! |---------|---------|
-//! | *(none by default)* | Default build: no HTTP client or TLS dependencies. |
+//! | `cli` *(default)* | Builds the `ephemerust` binary (pulls `clap` and `env_logger`). Library users can set `default-features = false`. |
 //! | `network` | Enables the `net` module (bounded HTTPS fetch of CelesTrak-style element-set
 //!   bulletins via `ureq`/rustls) and the `track` CLI flag `--tle-url`. See `http_plan.md`
 //!   for the operational requirements this implementation follows. |
@@ -101,6 +114,7 @@ pub mod error {
     /// [`crate::satellite::TleError`], and [`AstroError::hint`] surfaces a corrective hint
     /// where one is available.
     #[derive(Error, Debug)]
+    #[non_exhaustive]
     pub enum AstroError {
         /// A coordinate input was invalid (e.g. NaN, infinite, or out of range).
         #[error("Invalid coordinate: {0}")]
@@ -151,6 +165,7 @@ pub use error::{AstroError, Result};
 // Re-export coordinate types and WGS84 geodetic helpers
 pub use coordinates::{
     AltAz, Ecef, Eci, Geodetic, RaDec, ecef_to_geodetic_wgs84, geodetic_wgs84_to_ecef,
+    refraction_deg, refraction_deg_with_conditions,
 };
 
 // Re-export celestial object types

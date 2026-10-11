@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 
 /// A celestial body whose position or rise/set time can be computed.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum CelestialObject {
     /// The Sun.
     Sun,
@@ -38,6 +39,7 @@ pub struct ObserverLocation {
 /// Each field is `None` when the body does not cross the horizon that day — either because it
 /// is circumpolar (always up) or never rises at the observer's latitude.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct RiseSetTimes {
     /// UTC time the body rises above the horizon, or `None` if it does not rise/set that day.
     pub rise: Option<DateTime<Utc>>,

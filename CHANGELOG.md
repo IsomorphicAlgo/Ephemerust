@@ -5,19 +5,78 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project aims to adhere to [Semantic Versioning](https://semver.org/).
 
-**Versioning policy:** the project remains in the `0.x.y` range while its public API is still
-evolving. Per Cargo's SemVer rules, during `0.x` the *minor* version carries breaking changes
-(`0.2.0` → `0.3.0`) and the *patch* version carries compatible ones (`0.2.0` → `0.2.1`).
-A `1.0.0` release is reserved for a deliberately committed-stable API.
+**Versioning policy:** from `1.0.0` the public API is stable — breaking changes only in a new
+major version, compatible additions in minor versions, fixes in patch versions. Numerical
+results may improve in a minor or patch release when a correction brings them closer to
+physical truth; such changes are always listed under **Fixed** with their size. Raising the
+MSRV is done only in a minor release. (Before 1.0, per Cargo's rules for `0.x`, the minor
+version carried breaking changes.)
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-11
+
+First stable release. The public API is now covered by Semantic Versioning, the satellite
+range-rate output is corrected, and the satellite pipeline is cross-checked against an
+independent IAU 2000 implementation.
+
+### Fixed
+
+- **Satellite range rate (and therefore Doppler) was wrong by up to ~0.31 km/s.**
+  `teme_velocity_to_ecef_m_s` *added* the Earth-rotation transport term (**v**_ECEF must be
+  R·**v**_TEME − **ω** × **r**), and `Propagator::look_angles` additionally subtracted an
+  observer velocity even though the observer is stationary in the Earth-fixed frame. The net
+  error was the projection of |**ω** × **r**_observer| on the line of sight: up to 312 m/s at
+  48° N, i.e. up to ~456 Hz of Doppler at 437.5 MHz. After the fix, range rate agrees with
+  Skyfield to 0.41 m/s and with its own numerical derivative of slant range to < 1 m/s.
+  Azimuth, elevation, slant range, subpoints, passes, ground tracks and shadow states were
+  **not** affected. *Action for users:* any Doppler or range-rate tolerance tuned against
+  0.x output should be re-checked; it can now be much tighter.
+- **`greenwich_mean_sidereal_time` returned negative hours for dates before J2000.0** (it
+  used `%` instead of `rem_euclid`), contradicting its documented `[0, 24)` range. Internal
+  callers re-normalized, so only direct callers saw the negative value.
+- Per-call `log::info!` messages inside `ecef_to_eci` / `eci_to_ecef` (which run inside
+  propagation loops) are now `debug`, and the "close to origin" notice is no longer a
+  warning — it fired for legitimate velocity vectors.
+
+### Added
+
+- **`coordinates::refraction_deg` and `refraction_deg_with_conditions`** — standard-atmosphere
+  refraction (Sæmundsson / Meeus ch. 16) with optional pressure and temperature scaling, for
+  converting geometric elevations to apparent ones. Refraction is never applied implicitly.
+- **Independent cross-check:** `tests/external_reference.rs` compares look angles, range and
+  range rate with a committed Skyfield reference (`tests/data/skyfield_iss_everett.csv`,
+  360 samples over 24 h). Measured worst case: 0.34′ direction, 75 m range, 0.41 m/s range
+  rate.
+- Tight regression tests: range rate vs a 0.5 s central difference over a full day (< 1 m/s,
+  was a single sample at 250 m/s), and GMST against Meeus Example 12.a (a pre-J2000 date).
+- **`cli` Cargo feature (default).** The binary and its `clap` / `env_logger` dependencies are
+  now optional; library users can depend on `ephemerust` with `default-features = false`.
+- `#![forbid(unsafe_code)]` on the library and binary (the crate already contained no
+  `unsafe`; this makes it a compile-time guarantee).
+- `docs/accuracy-and-limits.md` gains a satellite validation and error-budget section.
+
 ### Changed
 
-- **crates.io discoverability**: added the `aerospace` and `aerospace::simulation` categories
-  (previously only `science` + `command-line-utilities`) and swapped the `orbital-mechanics`
-  keyword — already indexed via the crate description — for `tle`. Metadata-only; takes effect
-  with the next publish.
+- **Breaking — API stability for 1.x:** `AstroError`, `TleError`, `PropagationModel` and
+  `CelestialObject` are `#[non_exhaustive]`, as are the result structs `Tle`, `TemeState`,
+  `Subpoint`, `LookAngles`, `Pass`, `GroundTrackSample`, `RiseSetTimes`, `ShadowTransition`
+  and `StateVector`. Matching code needs a wildcard arm and these structs can no longer be
+  built with literal syntax outside the crate; reading fields is unchanged. Input structs
+  (`ObserverLocation`, `RaDec`, `AltAz`, `Ecef`, `Eci`, `Geodetic`, `OrbitalElements`) and the
+  complete sets `Planet` and `ShadowState` stay exhaustive.
+- **Breaking:** the VSOP87 table types `Vsop87Term`, `Vsop87Series`, `PlanetVsop87Data` and
+  `HeliocentricEcliptic` are now crate-private. No public function accepted or returned them.
+- **MSRV raised from 1.88 to 1.89**, matching Chronus Gateway. Edition stays 2024.
+- Removed the unused `anyhow` dependency; `criterion` 0.7 → 0.8 (dev-only); lockfile
+  refreshed to the latest compatible releases (e.g. `ureq` 3.4, `serde_json` 1.0.154).
+- Documentation: accuracy table replaces the outdated "a few degrees" look-angle estimate with
+  measured values, and explains why precession/nutation do not limit the SGP4 path.
+- crates.io metadata (from the unreleased 0.7 follow-up): `aerospace` and
+  `aerospace::simulation` categories; `tle` keyword in place of `orbital-mechanics`.
+- New GitHub Actions CI: tests on stable and the 1.89 MSRV across feature combinations,
+  `clippy -D warnings`, `rustfmt --check`, `rustdoc -D warnings`, and `cargo audit` /
+  `cargo deny`.
 
 ## [0.7.0] - 2026-07-29
 

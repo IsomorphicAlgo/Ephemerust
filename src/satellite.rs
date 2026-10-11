@@ -68,6 +68,7 @@ use thiserror::Error;
 /// exact character range, so a single shifted or altered character changes the meaning of
 /// everything after it.
 #[derive(Error, Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum TleError {
     /// The input did not contain exactly two data lines (optionally preceded by a name).
     #[error(
@@ -246,6 +247,7 @@ impl TleError {
 ///
 /// Angles are in degrees, the mean motion is in revolutions per day, and the epoch is UTC.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Tle {
     /// Optional object name (from the leading line of a 3-line element set).
     pub name: Option<String>,
@@ -292,6 +294,7 @@ pub struct Tle {
 ///
 /// Position is in kilometres and velocity in kilometres per second.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct TemeState {
     /// Position vector `[x, y, z]` in kilometres (TEME).
     pub position_km: [f64; 3],
@@ -301,6 +304,7 @@ pub struct TemeState {
 
 /// A sub-satellite (ground) point: the geodetic position directly beneath the satellite.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct Subpoint {
     /// Geodetic latitude in degrees, positive north.
     pub latitude_deg: f64,
@@ -312,10 +316,12 @@ pub struct Subpoint {
 
 /// Observer-relative look angles for pointing and visibility.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct LookAngles {
     /// Azimuth in degrees, measured clockwise from true north.
     pub azimuth_deg: f64,
-    /// Elevation above the local horizon in degrees.
+    /// **Geometric** elevation above the local horizon in degrees (no atmospheric refraction;
+    /// add [`crate::coordinates::refraction_deg`] for the apparent elevation).
     pub elevation_deg: f64,
     /// Slant range from observer to satellite in kilometres.
     pub range_km: f64,
@@ -325,6 +331,7 @@ pub struct LookAngles {
 
 /// A single visible pass of a satellite over an observer.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct Pass {
     /// Acquisition of signal: the satellite crosses the elevation mask while rising.
     pub aos: DateTime<Utc>,
@@ -344,6 +351,7 @@ pub struct Pass {
 ///
 /// Produced by [`ground_track`]; serialize with [`ground_track_to_csv`] or [`ground_track_to_json`].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct GroundTrackSample {
     /// Sample time (UTC).
     pub time: DateTime<Utc>,
@@ -609,7 +617,8 @@ pub fn select_tle(text: &str, selector: Option<&str>) -> Result<Tle> {
         Some(sel) => {
             let sel_trimmed = sel.trim();
             let sel_lower = sel_trimmed.to_lowercase();
-            let is_numeric = !sel_trimmed.is_empty() && sel_trimmed.bytes().all(|b| b.is_ascii_digit());
+            let is_numeric =
+                !sel_trimmed.is_empty() && sel_trimmed.bytes().all(|b| b.is_ascii_digit());
 
             let matches: Vec<&BulletinEntry<'_>> = entries
                 .iter()
@@ -853,6 +862,7 @@ fn parse_epoch(
 /// of the default path for near-Earth orbits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PropagationModel {
     /// WGS84 + IAU (`sgp4` crate default). Recommended for general use and WGS84 geodetic output.
     #[default]
@@ -1023,11 +1033,13 @@ impl Propagator {
         let rho_y = r_sat.y - r_obs.y;
         let rho_z = r_sat.z - r_obs.z;
 
+        // Relative velocity in the Earth-fixed frame. The observer is fixed to the ground, so
+        // its ECEF velocity is zero: Earth rotation is already accounted for by expressing the
+        // satellite's velocity in ECEF (see `teme_velocity_to_ecef_m_s`).
         let v_sat = teme_velocity_to_ecef_m_s(&state, time, &r_sat)?;
-        let v_obs = omega_cross_r_ecef(&r_obs);
-        let rdx = v_sat[0] - v_obs[0];
-        let rdy = v_sat[1] - v_obs[1];
-        let rdz = v_sat[2] - v_obs[2];
+        let rdx = v_sat[0];
+        let rdy = v_sat[1];
+        let rdz = v_sat[2];
 
         let (e, n, u) =
             ecef_delta_to_enu(observer.latitude, observer.longitude, rho_x, rho_y, rho_z);
@@ -1263,8 +1275,15 @@ fn omega_cross_r_ecef(r: &Ecef) -> [f64; 3] {
     [-w * r.y, w * r.x, 0.0]
 }
 
-/// TEME velocity to ECEF velocity (m/s), including the transport term **ω** × **r** for the
-/// rotating Earth-fixed frame (Vallado-style bridge used with SGP4/TEME pipelines).
+/// TEME velocity to ECEF velocity (m/s), including the transport term for the rotating
+/// Earth-fixed frame (Vallado-style bridge used with SGP4/TEME pipelines).
+///
+/// Differentiating **r**_ECEF = R(θ) **r**_TEME with θ = GMST increasing at rate ω gives
+/// **v**_ECEF = R(θ) **v**_TEME − **ω** × **r**_ECEF. The transport term is **subtracted**: a
+/// point fixed in inertial space appears to drift *westward* as seen from the rotating Earth.
+/// (Releases before 1.0.0 added the term and also subtracted an observer velocity, which left a
+/// line-of-sight range-rate error of up to |**ω** × **r**_obs| ≈ 0.31 km/s at mid-latitudes;
+/// see `CHANGELOG.md`.)
 fn teme_velocity_to_ecef_m_s(
     state: &TemeState,
     time: DateTime<Utc>,
@@ -1279,7 +1298,7 @@ fn teme_velocity_to_ecef_m_s(
     };
     let v_rot = eci_to_ecef(v_eci, gmst)?;
     let wxr = omega_cross_r_ecef(r_ecef);
-    Ok([v_rot.x + wxr[0], v_rot.y + wxr[1], v_rot.z + wxr[2]])
+    Ok([v_rot.x - wxr[0], v_rot.y - wxr[1], v_rot.z - wxr[2]])
 }
 
 /// Rotates a geocentric ECEF difference vector into **ENU** (east, north, up) at the observer.
@@ -1308,9 +1327,12 @@ fn ecef_delta_to_enu(
 
 /// Topocentric look angles from a TLE, time, and observer location.
 ///
-/// Pipeline: [`propagate`] → TEME→ECEF position and velocity (including **ω** × **r** for
-/// Earth rotation), minus the observer's ECEF position and **ω** × **r_obs** velocity, then
-/// a local **ENU** (east–north–up) rotation. Azimuth is measured **clockwise from true north**
+/// Pipeline: [`propagate`] → TEME→ECEF position and velocity (the velocity includes the
+/// −**ω** × **r** transport term for Earth rotation), minus the observer's ECEF position (the
+/// observer is stationary in ECEF, so no observer velocity is subtracted), then a local
+/// **ENU** (east–north–up) rotation. Range rate is the projection of the Earth-fixed relative
+/// velocity onto the line of sight; it agrees with a numerical derivative of slant range to
+/// well under 1 m/s. Azimuth is measured **clockwise from true north**
 /// (0° = north, 90° = east), matching [`crate::coordinates::AltAz`] conventions. Elevation is
 /// above the local astronomical horizon (the plane perpendicular to ellipsoid up).
 ///
@@ -1694,7 +1716,10 @@ mod tests {
         let err = select_tle(&two_object_bulletin(), None).expect_err("ambiguous");
         let msg = err.to_string();
         assert!(msg.contains("2 element sets"), "{msg}");
-        assert!(msg.contains(ISS_NAME) && msg.contains("ISS 2008 ARCHIVE"), "{msg}");
+        assert!(
+            msg.contains(ISS_NAME) && msg.contains("ISS 2008 ARCHIVE"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -1752,7 +1777,10 @@ mod tests {
         assert_eq!(ok.catalog_number, 25544);
 
         let err = select_tle(&bulletin, Some("archive")).expect_err("corrupted entry");
-        assert!(matches!(err, AstroError::Tle(_)), "expected TLE error, got {err}");
+        assert!(
+            matches!(err, AstroError::Tle(_)),
+            "expected TLE error, got {err}"
+        );
     }
 
     // Vallado SGP4 verification satellite 00005 (Vanguard), with published reference outputs.
@@ -2191,18 +2219,25 @@ mod tests {
             longitude: -122.2503,
             elevation: 0.0,
         };
-        let t0 = tle.epoch;
-        let la0 = look_angles(&tle, t0, obs).expect("look angles at epoch");
-        let dt_s = 1.0_f64;
+        // Sweep a full day (both visible and below-horizon geometry) at 2-minute spacing and
+        // compare against a 0.5 s central difference of slant range. The truncation error of
+        // the difference is ~(dt²/6)·|d³ρ/dt³|, far below the 1 m/s bound. Before 1.0.0 this
+        // test used a 250 m/s tolerance, which hid a ~310 m/s Earth-rotation sign error.
+        let prop = Propagator::new(&tle).expect("ISS propagator");
+        let dt_s = 0.5_f64;
         let dt = chrono::Duration::milliseconds((dt_s * 1000.0) as i64);
-        let r_plus = look_angles(&tle, t0 + dt, obs).expect("look+").range_km;
-        let r_minus = look_angles(&tle, t0 - dt, obs).expect("look-").range_km;
-        let num_km_s = (r_plus - r_minus) / (2.0 * dt_s);
+        let mut worst_m_s = 0.0_f64;
+        for k in 0..720 {
+            let t = tle.epoch + chrono::Duration::minutes(2 * k);
+            let la = prop.look_angles(t, obs).expect("look angles");
+            let r_plus = prop.look_angles(t + dt, obs).expect("look+").range_km;
+            let r_minus = prop.look_angles(t - dt, obs).expect("look-").range_km;
+            let num_km_s = (r_plus - r_minus) / (2.0 * dt_s);
+            worst_m_s = worst_m_s.max((num_km_s - la.range_rate_km_s).abs() * 1000.0);
+        }
         assert!(
-            (num_km_s - la0.range_rate_km_s).abs() < 0.25,
-            "range_rate {} vs numerical {} km/s (1 s central difference)",
-            la0.range_rate_km_s,
-            num_km_s
+            worst_m_s < 1.0,
+            "range_rate disagrees with d(range)/dt by up to {worst_m_s:.3} m/s (bound 1 m/s)"
         );
     }
 

@@ -1,0 +1,29 @@
+# cargo-deny configuration. Run: `cargo deny --all-features check` from the crate root.
+# Mirrors Chronus Gateway's policy; the advisory database is fetched on first run.
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "0BSD",
+    "Unlicense",
+    # webpki-roots (Mozilla CA bundle, via ureq/rustls under the optional `network` feature).
+    "CDLA-Permissive-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

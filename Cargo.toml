@@ -1,8 +1,10 @@
 [package]
 name = "ephemerust"
-version = "0.7.0"
+version = "1.0.0"
 edition = "2024"
-rust-version = "1.88"
+# MSRV: matches Chronus Gateway. Raising it is treated as a minor-version change (see readme
+# "Versioning"); CI builds on both this floor and the latest stable toolchain.
+rust-version = "1.89"
 authors = ["Michael Hansen"]
 description = "An accessible, teaching-grade astronomy, orbital-mechanics, and satellite-tracking library and CLI for Rust"
 license = "MIT"
@@ -20,16 +22,23 @@ categories = ["aerospace", "aerospace::simulation", "science", "command-line-uti
 all-features = true
 
 [features]
-default = []
+# `cli` builds the `ephemerust` binary. It is on by default so `cargo install ephemerust` keeps
+# working; library users can opt out with `default-features = false` to skip clap/env_logger.
+default = ["cli"]
+cli = ["dep:clap", "dep:env_logger"]
 # HTTPS TLE fetch: enables the `net` library module and the `track` CLI flag `--tle-url`.
 # Pulls the minimal blocking HTTP client `ureq` (rustls TLS). See http_plan.md.
 network = ["dep:ureq"]
 
+[[bin]]
+name = "ephemerust"
+path = "src/main.rs"
+required-features = ["cli"]
+
 [dependencies]
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive"], optional = true }
+env_logger = { version = "0.11", optional = true }
 log = "0.4"
-env_logger = "0.11"
-anyhow = "1.0"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -38,7 +47,7 @@ sgp4 = "2.4.0"
 ureq = { version = "3.3.0", optional = true }
 
 [dev-dependencies]
-criterion = "0.7"
+criterion = "0.8"
 # Used by integration tests (`tests/cli_track.rs`) for JSON assertions.
 serde_json = "1.0"
 

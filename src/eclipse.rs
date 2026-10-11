@@ -123,6 +123,7 @@ impl std::fmt::Display for ShadowState {
 /// (sunlit ↔ penumbra or penumbra ↔ umbra): even when a coarse scan jumps straight from
 /// sunlit to umbra, the search emits the two underlying boundary crossings separately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct ShadowTransition {
     /// UTC instant of the boundary crossing, refined to ~1 ms.
     pub time: DateTime<Utc>,
@@ -598,7 +599,9 @@ mod tests {
                 .expect("empty window is ok")
                 .is_empty()
         );
-        assert!(shadow_transitions(&prop, start, start + Duration::hours(1), Duration::zero()).is_err());
+        assert!(
+            shadow_transitions(&prop, start, start + Duration::hours(1), Duration::zero()).is_err()
+        );
     }
 
     #[test]

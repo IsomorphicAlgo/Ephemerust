@@ -1,3 +1,7 @@
+//! Command-line front end for the `ephemerust` library (built with the default `cli` feature).
+
+#![forbid(unsafe_code)]
+
 use clap::{Parser, Subcommand, ValueEnum};
 use ephemerust::Result;
 use serde::Serialize;
@@ -433,7 +437,11 @@ fn tle_summary_json(tle: &ephemerust::satellite::Tle) -> TleSummaryJson {
 /// files — go through [`select_tle`](ephemerust::satellite::select_tle), whose errors list
 /// the available objects and point at `--tle-name`.
 fn parse_tle_text(text: &str, selector: Option<&str>) -> Result<ephemerust::satellite::Tle> {
-    let multiple_sets = text.lines().filter(|l| l.trim_start().starts_with("2 ")).count() > 1;
+    let multiple_sets = text
+        .lines()
+        .filter(|l| l.trim_start().starts_with("2 "))
+        .count()
+        > 1;
     if selector.is_some() || multiple_sets {
         ephemerust::satellite::select_tle(text, selector)
     } else {

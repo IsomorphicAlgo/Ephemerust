@@ -77,7 +77,9 @@ pub fn greenwich_mean_sidereal_time(julian_date: f64) -> f64 {
     const SIDEREAL_RATE: f64 = 24.06570982441908;
     const GMST_J2000: f64 = 18.697374558;
 
-    (GMST_J2000 + SIDEREAL_RATE * (julian_date - J2000)) % 24.0
+    // `rem_euclid` (not `%`) keeps the result in [0, 24) for dates before J2000.0 as well;
+    // `%` would return a negative hour angle there.
+    (GMST_J2000 + SIDEREAL_RATE * (julian_date - J2000)).rem_euclid(24.0)
 }
 
 /// Converts Greenwich Mean Sidereal Time to **Local** Sidereal Time (LST) at a given
@@ -128,6 +130,19 @@ pub fn degrees_to_hours(degrees: f64) -> f64 {
 mod tests {
     use super::*;
     use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+
+    #[test]
+    fn gmst_stays_in_range_before_j2000() {
+        // Meeus, *Astronomical Algorithms* Example 12.a: 1987-04-10 0h UT (JD 2446895.5) has
+        // GMST 13h10m46.3668s = 13.179546 h. Before 1.0.0 the `%` operator returned a negative
+        // value for any date before J2000.0; the documented range is [0, 24).
+        let gmst = greenwich_mean_sidereal_time(2_446_895.5);
+        assert!((0.0..24.0).contains(&gmst), "GMST {gmst} h out of [0, 24)");
+        assert!(
+            (gmst - 13.179_546).abs() < 1e-3,
+            "GMST {gmst} h vs 13.179546 h"
+        );
+    }
 
     #[test]
     fn test_julian_date_j2000() {

@@ -197,6 +197,67 @@ pub struct Eci {
     pub z: f64,
 }
 
+/// Standard-atmosphere refraction correction, in degrees, for a **geometric (true)** elevation.
+///
+/// Light from an object near the horizon bends downward through the denser lower atmosphere,
+/// so the object appears *higher* than its geometric position. Add the returned value to a
+/// geometric elevation (for example [`crate::satellite::LookAngles::elevation_deg`]) to get the
+/// **apparent** elevation an antenna or telescope should point at.
+///
+/// Uses Sæmundsson's formula (Meeus, *Astronomical Algorithms*, eq. 16.4) at the standard
+/// conditions of 1010 hPa and 10 °C: about 0.48° (29′) at the horizon, 0.09° at 10°, and zero
+/// at the zenith. Inputs below −1° return 0, because the formula is not valid there and the
+/// object is not observable anyway. Accuracy is roughly 0.1′ above 15° and degrades toward
+/// the horizon, where real refraction varies with weather by several arcminutes.
+///
+/// Refraction applies to optical and (to a close approximation) microwave paths; it is **not**
+/// applied by any other function in this crate, so geometric and apparent elevations are
+/// never mixed silently.
+///
+/// # Example
+///
+/// ```
+/// use ephemerust::coordinates::refraction_deg;
+///
+/// let r = refraction_deg(0.0);
+/// assert!((r - 0.483).abs() < 0.005); // ~29 arcminutes at the horizon
+/// assert!(refraction_deg(90.0).abs() < 1e-6);
+/// ```
+pub fn refraction_deg(true_elevation_deg: f64) -> f64 {
+    refraction_deg_with_conditions(true_elevation_deg, 1010.0, 10.0)
+}
+
+/// Like [`refraction_deg`], scaled for local air pressure (hPa) and temperature (°C).
+///
+/// The correction is proportional to air density, so it is scaled by
+/// `(pressure_hpa / 1010) × (283 / (273 + temperature_c))` (Meeus, ch. 16). High-altitude
+/// sites (lower pressure) and hot days see less refraction.
+///
+/// # Example
+///
+/// ```
+/// use ephemerust::coordinates::{refraction_deg, refraction_deg_with_conditions};
+///
+/// // At ~3000 m altitude the pressure is ~700 hPa: refraction is about 30 % smaller.
+/// let thin = refraction_deg_with_conditions(5.0, 700.0, 0.0);
+/// assert!(thin < refraction_deg(5.0));
+/// ```
+pub fn refraction_deg_with_conditions(
+    true_elevation_deg: f64,
+    pressure_hpa: f64,
+    temperature_c: f64,
+) -> f64 {
+    let h = true_elevation_deg;
+    if !(-1.0..=90.0).contains(&h) {
+        return 0.0;
+    }
+    // Sæmundsson: R[arcmin] = 1.02 / tan(h + 10.3 / (h + 5.11)), with Meeus' +0.0019279′
+    // offset so that R is exactly zero at the zenith.
+    let r_arcmin = 1.02 / (h + 10.3 / (h + 5.11)).to_radians().tan() + 0.001_927_9;
+    let density = (pressure_hpa / 1010.0) * (283.0 / (273.0 + temperature_c));
+    (r_arcmin * density / 60.0).max(0.0)
+}
+
 /// Converts equatorial coordinates (RA/Dec) to horizontal coordinates (Alt/Az).
 ///
 /// # Arguments
@@ -456,7 +517,7 @@ pub fn ecef_to_eci(ecef: Ecef, gmst: f64) -> Result<Eci> {
 
     // Warn for very small coordinates near origin (might be intentional, but worth noting)
     if distance < 1000.0 && distance > 0.0 {
-        log::warn!(
+        log::debug!(
             "ECEF coordinates are very close to origin ({:.3} m). This may be intentional for testing.",
             distance
         );
@@ -472,8 +533,8 @@ pub fn ecef_to_eci(ecef: Ecef, gmst: f64) -> Result<Eci> {
         );
     }
 
-    // Info logging: transformation operation
-    log::info!(
+    // Per-call tracing (debug level: this runs inside tight propagation loops).
+    log::debug!(
         "ECEF to ECI transformation: input ECEF=({:.3}, {:.3}, {:.3}) m, distance={:.3} m, GMST={:.6} h (normalized: {:.6} h)",
         ecef.x,
         ecef.y,
@@ -513,8 +574,7 @@ pub fn ecef_to_eci(ecef: Ecef, gmst: f64) -> Result<Eci> {
         );
     }
 
-    // Info logging: transformation result
-    log::info!(
+    log::debug!(
         "ECEF to ECI transformation: output ECI=({:.3}, {:.3}, {:.3}) m, distance={:.3} m",
         x,
         y,
@@ -612,7 +672,7 @@ pub fn eci_to_ecef(eci: Eci, gmst: f64) -> Result<Ecef> {
 
     // Warn for very small coordinates near origin (might be intentional, but worth noting)
     if distance < 1000.0 && distance > 0.0 {
-        log::warn!(
+        log::debug!(
             "ECI coordinates are very close to origin ({:.3} m). This may be intentional for testing.",
             distance
         );
@@ -628,8 +688,8 @@ pub fn eci_to_ecef(eci: Eci, gmst: f64) -> Result<Ecef> {
         );
     }
 
-    // Info logging: transformation operation
-    log::info!(
+    // Per-call tracing (debug level: this runs inside tight propagation loops).
+    log::debug!(
         "ECI to ECEF transformation: input ECI=({:.3}, {:.3}, {:.3}) m, distance={:.3} m, GMST={:.6} h (normalized: {:.6} h)",
         eci.x,
         eci.y,
@@ -669,8 +729,7 @@ pub fn eci_to_ecef(eci: Eci, gmst: f64) -> Result<Ecef> {
         );
     }
 
-    // Info logging: transformation result
-    log::info!(
+    log::debug!(
         "ECI to ECEF transformation: output ECEF=({:.3}, {:.3}, {:.3}) m, distance={:.3} m",
         x,
         y,
@@ -1463,5 +1522,43 @@ mod tests {
         let g = ecef_to_geodetic_wgs84(ecef).unwrap();
         assert!((g.latitude_deg - 0.0).abs() < 1e-9);
         assert!((g.longitude_deg - 180.0).abs() < 1e-9 || (g.longitude_deg + 180.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod refraction_tests {
+    use super::*;
+
+    #[test]
+    fn refraction_matches_reference_values() {
+        // Standard-atmosphere refraction (1010 hPa, 10 °C), arcminutes: ~29' at the horizon,
+        // ~5.4' at 10°, ~1' at 45° (Sæmundsson; agrees with the Bennett tables to <0.1').
+        let cases = [(0.0, 28.98), (10.0, 5.41), (45.0, 1.00)];
+        for (h, expected_arcmin) in cases {
+            let got = refraction_deg(h) * 60.0;
+            assert!(
+                (got - expected_arcmin).abs() < 0.1,
+                "h = {h}: {got:.3}' vs {expected_arcmin}'"
+            );
+        }
+    }
+
+    #[test]
+    fn refraction_is_zero_at_zenith_and_outside_valid_range() {
+        assert!(refraction_deg(90.0).abs() < 1e-6);
+        assert_eq!(refraction_deg(-5.0), 0.0);
+        assert_eq!(refraction_deg(95.0), 0.0);
+    }
+
+    #[test]
+    fn refraction_decreases_with_elevation_and_air_density() {
+        let mut prev = f64::INFINITY;
+        for h in (-1..=90).map(f64::from) {
+            let r = refraction_deg(h);
+            assert!(r <= prev, "not monotonic at {h}");
+            prev = r;
+        }
+        assert!(refraction_deg_with_conditions(5.0, 700.0, 10.0) < refraction_deg(5.0));
+        assert!(refraction_deg_with_conditions(5.0, 1010.0, 35.0) < refraction_deg(5.0));
     }
 }

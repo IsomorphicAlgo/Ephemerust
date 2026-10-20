@@ -33,14 +33,28 @@ classification on a prebuilt `Propagator`), and the **`--tle-url` live fetch** i
 per [http_plan.md](../http_plan.md) (bounded `ureq`/rustls client, `select_tle` +
 `--tle-name` for multi-object bulletins, offline loopback-server test suite).
 
+**1.0.0 — stable API & validated physics (October 2026) — done.** Fixed the satellite
+range-rate sign error (up to ~0.31 km/s, i.e. ~450 Hz of UHF Doppler) and the pre-J2000 GMST
+range bug; added an independent Skyfield cross-check, opt-in atmospheric refraction, a `cli`
+feature so library users skip CLI dependencies, `#[non_exhaustive]` on errors and result
+types, `forbid(unsafe_code)`, MSRV 1.89 (shared with Chronus Gateway), and CI. See the
+[CHANGELOG](../CHANGELOG.md).
+
+**1.1.0 — Earth orientation & reference frames (October 2026) — done.** New `frames` module:
+UT1−UTC and polar motion (`EarthOrientation`), the leap-second table, and GCRF/EME2000/TEME ↔
+ITRF with IAU 2006 precession + IAU 2000B nutation, validated against astropy/ERFA to 7 cm; plus
+`Propagator::look_angles_with_eop` and `topocentric_look_angles` for states that do not come
+from a TLE. Chronus Gateway uses these for its CCSDS OEM backend.
+
 ### Remaining Phase 1 work
 
-- Satellite tracking follow-ups from [satellite-tracking-plan.md — Future work](satellite-tracking-plan.md#future-work) (external validation tests, Space-Track authenticated fetch if ever needed).
+- Satellite tracking follow-ups from [satellite-tracking-plan.md — Future work](satellite-tracking-plan.md#future-work) (Space-Track authenticated fetch if ever needed; external validation landed in 1.0.0).
+- Read IERS Bulletin A / finals files directly (today Earth orientation is passed by value).
 - Extend the VSOP87 series with more terms to push accuracy toward the arcsecond level.
 - Optional: a dedicated `planets` subcommand for listing/comparing multiple planets.
 - Longer term: advanced orbital propagation; asteroid/comet positions; stellar positions
-  and proper motion; additional frames (GCRS, ITRS); precession/nutation and refraction
-  corrections (see [accuracy-and-limits.md](accuracy-and-limits.md)).
+  and proper motion; additional frames (GCRS, ITRS); precession/nutation
+  corrections (refraction landed in 1.0.0; see [accuracy-and-limits.md](accuracy-and-limits.md)).
 
 ### Downstream: Chronus Gateway integration notes
 
@@ -48,8 +62,10 @@ per [http_plan.md](../http_plan.md) (bounded `ureq`/rustls client, `select_tle` 
   **`ephemerust::Propagator`** per element set and calls its borrowing methods per frame
   (initialization is ~72% of a one-shot call; see `rust-idioms.md` §1). Migrated in
   `crates/gateway/src/propagator.rs` (July 2026).
-- With **0.7.0 on crates.io**, the gateway can pin `ephemerust = "0.7"` instead of a
-  sibling checkout, simplifying its CI (MSRV compatible: 1.88 ≤ 1.89), and can upgrade its
+- ✅ The gateway pins Ephemerust from crates.io. **1.0.0** is a major bump: the gateway should
+  move to `ephemerust = { version = "1", default-features = false }` (same 1.89 MSRV) to pick
+  up the range-rate fix, after which its ±150 Hz Doppler bound is dominated by TLE age rather
+  than by Ephemerust. With 0.7.0 the gateway could also upgrade its
   CV-4 shadow check from the in-house Sun-geometry proxy to
   **`Propagator::shadow_state`** / `ShadowState` — real conical umbra/penumbra physics.
 

@@ -3,6 +3,9 @@
 //! By default eight tests run (`--tle-url` is absent without the `network` feature); with
 //! `cargo test --features network`, two additional tests here cover URL-flag policy and
 //! source exclusivity, and `tests/network_fetch.rs` exercises the fetch path offline.
+//! The whole file needs the binary, so it compiles only with the (default) `cli` feature.
+
+#![cfg(feature = "cli")]
 
 use std::process::Command;
 

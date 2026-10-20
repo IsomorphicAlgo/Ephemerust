@@ -1,0 +1,81 @@
+# CI for Ephemerust: tests on the MSRV and latest stable across feature combinations, lints,
+# docs, and supply-chain gates. Mirrors Chronus Gateway's pipeline (same 1.89 MSRV).
+#
+# cargo test exits with code 101 when tests fail; compile/link errors use other codes.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    # Weekly, so new RustSec advisories against the lockfile surface without a code change.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.toolchain }}, ${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # "1.89" is the MSRV declared in Cargo.toml; "stable" is the newest release.
+        toolchain: ["1.89", stable]
+        features: ["", "--all-features", "--no-default-features", "--no-default-features --features network"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: cargo test
+        run: cargo test --locked ${{ matrix.features }}
+
+  windows:
+    # The maintainer develops on Windows; keep the native target green too.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --all-features
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy (all features)
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: clippy (library only)
+        run: cargo clippy --locked --all-targets --no-default-features -- -D warnings
+      - name: rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --all-features
+      - name: Compile benchmarks
+        run: cargo bench --locked --no-run
+      - name: Package (what crates.io would receive)
+        run: cargo package --locked
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version 0.22.1
+      - name: cargo audit
+        run: cargo audit
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked --version 0.18.6
+      - name: cargo deny
+        run: cargo deny --all-features check

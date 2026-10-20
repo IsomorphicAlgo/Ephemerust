@@ -162,10 +162,12 @@ fn remote_plain_http_is_refused_before_connecting() {
 }
 
 /// Path to the binary under test, provided by Cargo to integration tests.
+#[cfg(feature = "cli")]
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_ephemerust")
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn cli_tle_url_with_tle_name_tracks_selected_object() {
     let (base, _) = spawn_fixture_server();
@@ -192,6 +194,7 @@ fn cli_tle_url_with_tle_name_tracks_selected_object() {
     assert_eq!(v["tle"]["catalog_number"], 25544);
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn cli_multi_object_url_without_tle_name_lists_available_objects() {
     let (base, _) = spawn_fixture_server();

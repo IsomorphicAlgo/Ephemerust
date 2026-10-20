@@ -43,6 +43,7 @@ pub struct OrbitalElements {
 /// This is the alternative to [`OrbitalElements`] for describing an orbit — equivalent
 /// information, but expressed as vectors that can be propagated or transformed directly.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct StateVector {
     /// Position vector `[x, y, z]` in the inertial frame (length unit matches the inputs,
     /// e.g. km).

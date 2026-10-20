@@ -64,7 +64,7 @@ planet-position calculation* heap-allocated dozens of `Vec`s, filled them with t
 constants, and dropped them. The fix changed the field types:
 
 ```rust
-pub struct Vsop87Series {
+pub(crate) struct Vsop87Series {   // crate-private since 1.0.0
     pub series_0: &'static [Vsop87Term],   // was: Vec<Vsop87Term>
     // ...
     pub series_4: &'static [Vsop87Term],   // was: Option<Vec<Vsop87Term>> — an empty

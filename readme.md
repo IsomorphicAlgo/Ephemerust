@@ -108,7 +108,7 @@ project, which uses Ephemerust as a dependency; see the [roadmap](docs/roadmap.m
 
 ## Install & build
 
-From [crates.io](https://crates.io/crates/ephemerust) (release **1.1.1**):
+From [crates.io](https://crates.io/crates/ephemerust) (release **1.1.2**):
 
 ```bash
 cargo install ephemerust          # CLI binary on your PATH
@@ -273,6 +273,7 @@ The short version. Every entry, with the numbers behind it, lives in [CHANGELOG.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| **1.1.2** | 2026-10-26 | Security patch: lockfile moves `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.11, clearing RUSTSEC-2026-0381 and 0382 (certificate-trust fixes; only compiled with the optional `network` feature). No API or numerical changes. |
 | **1.1.1** | 2026-10-19 | Security patch: lockfile moves `rustls` to 0.23.46, clearing RUSTSEC-2026-0346 to 0349 (only compiled with the optional `network` feature). Readme gains this changelog summary. No API or numerical changes. |
 | **1.1.0** | 2026-10-11 | New `frames` module: GCRF / EME2000 / TEME to ITRF with IAU 2006 precession, IAU 2000B nutation and polar motion. `EarthOrientation` input (UT1−UTC, pole offsets) and `Propagator::look_angles_with_eop`, which matches Skyfield to 0.04″ and 0.3 m. `topocentric_look_angles` for any Earth-fixed state. Additive only; the 1.0 API is unchanged. |
 | **1.0.0** | 2026-10-11 | First stable release; the public API is now covered by SemVer. **Fixed a satellite range-rate / Doppler error of up to ~0.31 km/s** (azimuth, elevation and range were not affected), and negative GMST before J2000. Added `refraction_deg`, an independent Skyfield cross-check, a `cli` feature, and `#![forbid(unsafe_code)]`. Result types became `#[non_exhaustive]`. MSRV is now 1.89. |

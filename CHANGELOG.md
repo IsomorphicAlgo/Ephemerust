@@ -14,6 +14,18 @@ version carried breaking changes.)
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-26
+
+Security patch. No API or numerical changes.
+
+### Security
+
+- Lockfile refresh: `rustls-webpki` 0.103.15 → 0.103.16 (RUSTSEC-2026-0382, certificate
+  verification could accept distrusted intermediates) and `webpki-roots` 1.0.9 → 1.0.11
+  (RUSTSEC-2026-0381, bundled roots trusted distrusted emSign intermediates). Both are only
+  compiled with the optional `network` feature, and no library code changed. Found by the
+  weekly `cargo audit` CI job.
+
 ## [1.1.1] - 2026-10-19
 
 Security patch. No API or numerical changes.

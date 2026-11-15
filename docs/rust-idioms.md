@@ -47,7 +47,7 @@ ownership expressing an invariant that other languages enforce with documentatio
 | `ground_track_90min_60s` before → after | 95.1 µs → 38.1 µs | **−59%** from initializing once |
 
 About 72% of a one-shot propagation call was initialization cost. `ground_track` and
-`predict_passes` now build one `Propagator` internally and share it across the coarse
+`predict_passes` now build one `Propagator` internally and share it across the stepping
 scan, bisection refinement, and culmination search. The one-shot free functions remain
 as conveniences — their documentation points loops at the struct.
 

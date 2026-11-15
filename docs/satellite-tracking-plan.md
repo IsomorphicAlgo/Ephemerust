@@ -203,8 +203,10 @@ Find and characterize visible passes over an observer for a time window.
 - `predict_passes(tle, observer, window, min_elevation) -> Vec<Pass>`, where each `Pass`
   reports acquisition-of-signal (AOS), culmination (time and maximum elevation), and
   loss-of-signal (LOS) times plus the corresponding azimuths.
-- A coarse-step horizon-crossing search with refinement of AOS/LOS and culmination times,
-  honoring a configurable elevation mask.
+- A horizon-crossing search with refinement of AOS/LOS and culmination times, honoring a
+  configurable elevation mask. (Originally a fixed coarse step, which could miss passes
+  shorter than the step; replaced in 1.2.0 by safe stepping, which cannot. See the 1.2.0
+  changelog entry.)
 
 ### Test plan
 

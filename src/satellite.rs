@@ -41,8 +41,8 @@
 //! using Greenwich sidereal time (same Z-rotation convention as ECI→ECEF in [`crate::coordinates`]);
 //! [`subpoint`] combines propagation with that chain for the sub-satellite point; and
 //! [`look_angles`] completes the topocentric East–North–Up (ENU) pipeline for azimuth, elevation,
-//! slant range, and range rate; [`predict_passes`] finds visible passes over a time window using
-//! a coarse elevation scan with bisection refinement; [`ground_track`] samples the sub-satellite
+//! slant range, and range rate; [`predict_passes`] finds visible passes over a time window by
+//! safe stepping (it cannot skip a pass between samples) with bisection refinement; [`ground_track`] samples the sub-satellite
 //! path with [`ground_track_to_csv`] / [`ground_track_to_json`] for plotting pipelines.
 //!
 //! # Example
@@ -1260,8 +1260,8 @@ impl Propagator {
 
     /// Predicts visible passes of this element set over `observer` in a UTC time window.
     ///
-    /// This is the same search as the free function [`predict_passes`], on an
-    /// already-initialized propagator. It is the form to use when the element set is an
+    /// This is the same search as the free function [`predict_passes`] (see there for how it
+    /// works and what it guarantees), on an already-initialized propagator. It is the form to use when the element set is an
     /// [`Omm`], and when one satellite is checked against **several ground stations**: the SGP4
     /// initialization is paid once and each station only costs its own search.
     ///
@@ -1308,7 +1308,8 @@ impl Propagator {
         window_end: DateTime<Utc>,
         min_elevation_deg: f64,
     ) -> Result<Vec<Pass>> {
-        if window_end <= window_start {
+        // A NaN mask compares false against every elevation, so nothing is ever "above" it.
+        if window_end <= window_start || min_elevation_deg.is_nan() {
             return Ok(Vec::new());
         }
 
@@ -1316,20 +1317,36 @@ impl Propagator {
             return predict_passes_geo(self, observer, window_start, window_end, min_elevation_deg);
         }
 
-        let dt = coarse_step_for_mean_motion(self.shape.mean_motion_rev_per_day);
+        // Safe stepping: each step is no longer than the time for which the elevation provably
+        // stays on its current side of the mask (see `safe_step`), so a pass cannot begin and
+        // end between two samples. The step is clamped below by `min_step`, which is therefore
+        // the shortest pass the search is guaranteed to find.
+        let min_step = min_step_for_mean_motion(self.shape.mean_motion_rev_per_day);
+        let max_speed = max_earth_fixed_speed_km_s(&self.shape);
+        // Without a usable speed bound (degenerate mean elements) fall back to fixed steps.
+        let fixed_step = coarse_step_for_mean_motion(self.shape.mean_motion_rev_per_day);
         let mut passes = Vec::new();
 
         let mut prev_t = window_start;
-        let mut prev_el = elevation_deg(self, prev_t, observer)?;
+        let mut prev = self.look_angles(prev_t, observer)?;
+        let mut prev_el = prev.elevation_deg;
         let mut pending_aos: Option<DateTime<Utc>> = if prev_el >= min_elevation_deg {
             Some(window_start)
         } else {
             None
         };
 
-        let mut t = window_start + dt;
-        while t < window_end {
-            let el = elevation_deg(self, t, observer)?;
+        loop {
+            let dt = match max_speed {
+                Some(v) => safe_step(&prev, min_elevation_deg, v).max(min_step),
+                None => fixed_step,
+            };
+            let t = prev_t + dt;
+            if t >= window_end {
+                break;
+            }
+            let look = self.look_angles(t, observer)?;
+            let el = look.elevation_deg;
 
             if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
                 let aos = bisect_elevation_rising(self, observer, min_elevation_deg, prev_t, t)?;
@@ -1356,8 +1373,8 @@ impl Propagator {
             }
 
             prev_t = t;
+            prev = look;
             prev_el = el;
-            t += dt;
         }
 
         // Final segment up to exclusive window end.
@@ -1854,7 +1871,11 @@ pub fn look_angles_with_model(
 /// Seconds per solar day (used only to convert mean motion from rev/day to an orbital period).
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
-/// Coarse sampling step for pass finding: a fraction of the orbital period, clamped.
+/// Fixed sampling step for pass finding: 1/48 of the orbital period, clamped to 15–600 s.
+///
+/// This was the only step before 1.2.0. It is now the fallback for element sets whose mean
+/// elements give no speed bound (see [`max_earth_fixed_speed_km_s`]); the normal path uses
+/// [`safe_step`].
 fn coarse_step_for_mean_motion(mean_motion_rev_per_day: f64) -> Duration {
     if mean_motion_rev_per_day <= 0.0 || !mean_motion_rev_per_day.is_finite() {
         return Duration::seconds(60);
@@ -1862,6 +1883,68 @@ fn coarse_step_for_mean_motion(mean_motion_rev_per_day: f64) -> Duration {
     let period_s = SECONDS_PER_DAY / mean_motion_rev_per_day;
     let step_s = (period_s / 48.0).round().clamp(15.0, 600.0);
     Duration::seconds(step_s as i64)
+}
+
+/// Earth's gravitational parameter μ in km³/s² (WGS84), used only for the speed bound below.
+const MU_EARTH_KM3_S2: f64 = 398_600.441_8;
+
+/// The shortest step the pass search takes, and therefore the shortest pass it is guaranteed
+/// to find: 1/5760 of the orbital period, clamped to 1–15 s (1 s for low Earth orbit).
+///
+/// Angular rates in the sky scale roughly with the orbital rate, so a slow, high orbit can take
+/// longer steps without becoming coarser *relative to how fast anything changes*.
+fn min_step_for_mean_motion(mean_motion_rev_per_day: f64) -> Duration {
+    if mean_motion_rev_per_day <= 0.0 || !mean_motion_rev_per_day.is_finite() {
+        return Duration::seconds(1);
+    }
+    let period_s = SECONDS_PER_DAY / mean_motion_rev_per_day;
+    let step_ms = (period_s / 5760.0 * 1000.0).clamp(1_000.0, 15_000.0);
+    Duration::milliseconds(step_ms as i64)
+}
+
+/// An upper bound on the satellite's speed in the **Earth-fixed** frame, anywhere on its orbit,
+/// in km/s. Returns `None` if the mean elements do not describe a closed orbit.
+///
+/// The inertial speed is greatest at perigee (vis-viva: `v_p² = μ/a · (1+e)/(1−e)`), and moving
+/// to the rotating frame changes the velocity by `ω × r`, at most `ω · r_apogee`. The sum is
+/// padded by 15 % because the elements are SGP4 *mean* elements: the true orbit oscillates
+/// around them and, under drag, shrinks and speeds up over the search window.
+fn max_earth_fixed_speed_km_s(shape: &OrbitShape) -> Option<f64> {
+    let n_rad_s = shape.mean_motion_rev_per_day * std::f64::consts::TAU / SECONDS_PER_DAY;
+    let e = shape.eccentricity;
+    if !(n_rad_s.is_finite() && n_rad_s > 0.0 && (0.0..1.0).contains(&e)) {
+        return None;
+    }
+    let a_km = (MU_EARTH_KM3_S2 / (n_rad_s * n_rad_s)).cbrt();
+    let v_perigee = (MU_EARTH_KM3_S2 / a_km * (1.0 + e) / (1.0 - e)).sqrt();
+    let v_rotation = OMEGA_EARTH_RAD_S * a_km * (1.0 + e);
+    let bound = 1.15 * (v_perigee + v_rotation);
+    bound.is_finite().then_some(bound)
+}
+
+/// How long the elevation is **guaranteed** to stay on its current side of the mask.
+///
+/// The observer is fixed to the Earth, so the line of sight turns no faster than the
+/// satellite's Earth-fixed speed divided by its range: `|d(elevation)/dt| ≤ v / ρ`. The range
+/// itself shrinks no faster than `v`, so over a step `Δt` the elevation moves by at most
+///
+/// ```text
+/// ∫ v / (ρ − v·s) ds  =  ln( ρ / (ρ − v·Δt) )      (radians)
+/// ```
+///
+/// Setting that equal to the angular gap `g` between the current elevation and the mask and
+/// solving for the step gives `Δt = ρ · (1 − e^(−g)) / v`. Far from the mask or far from the
+/// station the step is long (minutes); it shortens as a crossing approaches. This is the same
+/// idea as sphere tracing in computer graphics: advance by a distance known to be safe.
+fn safe_step(look: &LookAngles, mask_deg: f64, max_speed_km_s: f64) -> Duration {
+    let gap_rad = (look.elevation_deg - mask_deg).abs().to_radians();
+    let seconds = look.range_km * (1.0 - (-gap_rad).exp()) / max_speed_km_s;
+    if seconds.is_finite() && seconds > 0.0 {
+        // Rounded down so the step never exceeds the bound; capped so it fits the type.
+        Duration::milliseconds((seconds.min(86_400.0) * 1000.0) as i64)
+    } else {
+        Duration::zero()
+    }
 }
 
 fn elevation_deg(prop: &Propagator, t: DateTime<Utc>, observer: ObserverLocation) -> Result<f64> {
@@ -1989,14 +2072,29 @@ fn culmination_time_and_max_el(
 
 /// Predicts visible passes of a satellite over an observer in a UTC time window.
 ///
-/// The search samples elevation at a coarse step derived from the element set’s mean motion,
-/// detects crossings of `min_elevation_deg`, then refines AOS and LOS with bisection and
-/// locates culmination by ternary search on the elevation profile. Near-geosynchronous
-/// sets (≈1 rev/day, low inclination) use a simplified model: if the satellite is above the
-/// mask at the start, middle, and end of the window, a single pass spanning the full window
-/// is returned; otherwise none.
+/// A pass is an interval during which the satellite is at or above `min_elevation_deg` (the
+/// elevation mask). The search walks the window in **safe steps**: from each sample it advances
+/// by no more than the time for which the elevation provably cannot reach the mask, a bound
+/// that follows from the satellite's range and its greatest possible Earth-fixed speed. Steps
+/// are minutes long while the satellite is far below the horizon and shrink as a crossing
+/// approaches, so the work concentrates where passes are. Each crossing is then refined by
+/// bisection to 1 ms, and culmination is located by ternary search on the elevation profile.
 ///
-/// `window_end` is **exclusive** (samples use `t < window_end`).
+/// # What is guaranteed
+///
+/// Because a step never jumps over a crossing, a pass cannot hide between two samples: **every
+/// pass at least as long as the minimum step is found**, including brief, grazing passes that
+/// barely clear the mask. The minimum step is 1/5760 of the orbital period, clamped to 1–15 s
+/// (1 s for low Earth orbit). Shorter passes may be missed; a pass that brief is comparable
+/// to the timing uncertainty of the element set itself. Releases before 1.2.0 sampled at a fixed
+/// 1/48 of the period (about 116 s for the ISS) and could miss any pass shorter than that.
+///
+/// Near-geosynchronous sets (≈1 rev/day, inclination under 3°, eccentricity under 0.02) use a
+/// simplified model instead: if the satellite is above the mask at the start, middle, and end
+/// of the window, a single pass spanning the full window is returned; otherwise none.
+///
+/// `window_end` is **exclusive**. A pass already in progress at `window_start` begins there,
+/// and one still in progress at `window_end` ends there.
 ///
 /// `observer.elevation` is interpreted like [`look_angles`]: metres above the WGS84 ellipsoid.
 pub fn predict_passes(
@@ -3249,5 +3347,266 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("catalog 339999"), "{err}");
+    }
+
+    // --- Pass search: safe stepping --------------------------------------------------------
+
+    /// A Molniya-like orbit: 12-hour period, eccentricity 0.72, so perigee is fast and low.
+    const MOLNIYA_OMM_JSON: &str = r#"{"OBJECT_NAME":"TEST-MOLNIYA",
+        "EPOCH":"2026-08-01T12:00:00.000000","MEAN_MOTION":2.00613,"ECCENTRICITY":0.7215,
+        "INCLINATION":63.43,"RA_OF_ASC_NODE":210.5,"ARG_OF_PERICENTER":280.1,
+        "MEAN_ANOMALY":12.3,"BSTAR":0.00005}"#;
+
+    /// The decaying, high-drag element set from `tests/data/omm/mario.csv`.
+    const MARIO_LINE1: &str =
+        "1 55123U 98067UQ  23115.44827133  .00787702  29408-3  15680-2 0  9999";
+    const MARIO_LINE2: &str =
+        "2 55123  51.6242 216.2930 0014649 331.8976  28.1241 15.99081912 18396";
+
+    fn earth_fixed_speed_km_s(prop: &Propagator, t: DateTime<Utc>) -> f64 {
+        let state = prop.propagate(t).unwrap();
+        let r = teme_to_ecef(&state, t).unwrap();
+        let v = teme_velocity_to_ecef_m_s(&state, t, &r).unwrap();
+        (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt() / 1000.0
+    }
+
+    #[test]
+    fn speed_bound_covers_every_sampled_earth_fixed_speed() {
+        let iss = Tle::from_lines(None, ISS_LINE1, ISS_LINE2).unwrap();
+        let mario = Tle::from_lines(None, MARIO_LINE1, MARIO_LINE2).unwrap();
+        let molniya = Omm::parse(MOLNIYA_OMM_JSON).unwrap();
+        let cases = [
+            ("ISS", Propagator::new(&iss).unwrap(), iss.epoch),
+            // Decaying: the orbit shrinks and speeds up over the days sampled.
+            ("MARIO", Propagator::new(&mario).unwrap(), mario.epoch),
+            (
+                "Molniya",
+                Propagator::from_omm(&molniya).unwrap(),
+                molniya.epoch,
+            ),
+        ];
+        for (name, prop, epoch) in &cases {
+            let bound = max_earth_fixed_speed_km_s(&prop.shape).expect("closed orbit");
+            let mut fastest = 0.0_f64;
+            // Three days at 20 s: every perigee passage is sampled closely.
+            for k in 0..(3 * 86_400 / 20) {
+                let t = *epoch + Duration::seconds(20 * k);
+                fastest = fastest.max(earth_fixed_speed_km_s(prop, t));
+            }
+            assert!(
+                fastest <= bound,
+                "{name}: sampled {fastest:.3} km/s exceeds the bound {bound:.3} km/s"
+            );
+            // A bound far above reality would still be correct, but would shrink every step.
+            assert!(
+                bound < 2.0 * fastest,
+                "{name}: bound {bound:.3} km/s is needlessly loose (fastest {fastest:.3})"
+            );
+        }
+    }
+
+    #[test]
+    fn speed_bound_is_none_for_degenerate_elements() {
+        for (n, e) in [
+            (0.0, 0.1),
+            (-1.0, 0.1),
+            (f64::NAN, 0.1),
+            (15.5, 1.0),
+            (15.5, -0.1),
+        ] {
+            let shape = OrbitShape {
+                mean_motion_rev_per_day: n,
+                inclination_deg: 51.6,
+                eccentricity: e,
+            };
+            assert!(max_earth_fixed_speed_km_s(&shape).is_none(), "n={n}, e={e}");
+        }
+    }
+
+    /// The guarantee the search rests on: within a safe step the elevation does not cross the
+    /// mask. Checked directly by scanning inside each step.
+    #[test]
+    fn elevation_stays_on_its_side_of_the_mask_within_a_safe_step() {
+        let iss = Tle::from_lines(None, ISS_LINE1, ISS_LINE2).unwrap();
+        let molniya = Omm::parse(MOLNIYA_OMM_JSON).unwrap();
+        let cases = [
+            (Propagator::new(&iss).unwrap(), iss.epoch, 97, 5),
+            (
+                Propagator::from_omm(&molniya).unwrap(),
+                molniya.epoch,
+                613,
+                20,
+            ),
+        ];
+        let mut steps_checked = 0;
+        for (prop, epoch, spacing_s, scan_s) in &cases {
+            let v = max_earth_fixed_speed_km_s(&prop.shape).unwrap();
+            for mask in [0.0, 10.0, 60.0] {
+                for k in 0..120 {
+                    let t = *epoch + Duration::seconds(spacing_s * k);
+                    let look = prop.look_angles(t, everett()).unwrap();
+                    let step = safe_step(&look, mask, v);
+                    let above = look.elevation_deg >= mask;
+                    let mut s = Duration::seconds(*scan_s);
+                    while s <= step {
+                        let el = prop.look_angles(t + s, everett()).unwrap().elevation_deg;
+                        assert_eq!(
+                            el >= mask,
+                            above,
+                            "mask {mask}°: elevation crossed {:?} into a safe step of {:?} \
+                             (from {:.3}° to {el:.3}°)",
+                            s,
+                            step,
+                            look.elevation_deg
+                        );
+                        s += Duration::seconds(*scan_s);
+                    }
+                    steps_checked += 1;
+                }
+            }
+        }
+        assert_eq!(steps_checked, 720);
+    }
+
+    #[test]
+    fn safe_step_grows_with_range_and_with_distance_from_the_mask() {
+        let look = |elevation_deg: f64, range_km: f64| LookAngles {
+            azimuth_deg: 0.0,
+            elevation_deg,
+            range_km,
+            range_rate_km_s: 0.0,
+        };
+        let v = 8.0;
+        // At the mask there is no safe step at all.
+        assert_eq!(safe_step(&look(10.0, 2_000.0), 10.0, v), Duration::zero());
+        // Symmetric above and below.
+        assert_eq!(
+            safe_step(&look(5.0, 2_000.0), 10.0, v),
+            safe_step(&look(15.0, 2_000.0), 10.0, v)
+        );
+        // Farther from the mask, or farther from the station: a longer step.
+        assert!(
+            safe_step(&look(-40.0, 2_000.0), 10.0, v) > safe_step(&look(5.0, 2_000.0), 10.0, v)
+        );
+        assert!(safe_step(&look(5.0, 9_000.0), 10.0, v) > safe_step(&look(5.0, 2_000.0), 10.0, v));
+        // Never longer than the time to cover the whole range at full speed.
+        assert!(safe_step(&look(-89.0, 9_000.0), 90.0, v) < Duration::seconds(9_000 / 8 + 1));
+        // 1 radian below the mask at 8000 km and 8 km/s: 8000 · (1 − e⁻¹) / 8 ≈ 632.1 s.
+        let one_radian = safe_step(&look(10.0 - 1.0_f64.to_degrees(), 8_000.0), 10.0, v);
+        assert_eq!(one_radian.num_milliseconds(), 632_120);
+    }
+
+    #[test]
+    fn minimum_step_scales_with_the_orbital_period() {
+        // ISS: 5576 s period / 5760 is under a second, so the 1 s floor applies.
+        assert_eq!(min_step_for_mean_motion(15.495), Duration::seconds(1));
+        // 12-hour orbit: 43 200 / 5760 = 7.5 s.
+        assert_eq!(min_step_for_mean_motion(2.0), Duration::milliseconds(7_500));
+        // One revolution per day gives exactly 15 s, and slower orbits are capped there.
+        assert_eq!(min_step_for_mean_motion(1.0), Duration::seconds(15));
+        assert_eq!(min_step_for_mean_motion(0.1), Duration::seconds(15));
+        assert_eq!(min_step_for_mean_motion(0.0), Duration::seconds(1));
+        assert_eq!(min_step_for_mean_motion(f64::NAN), Duration::seconds(1));
+    }
+
+    /// Brute force: contiguous runs of 1 s samples at or above the mask.
+    fn passes_by_one_second_scan(
+        prop: &Propagator,
+        observer: ObserverLocation,
+        start: DateTime<Utc>,
+        seconds: i64,
+        mask: f64,
+    ) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
+        let mut runs = Vec::new();
+        let mut open: Option<i64> = None;
+        for k in 0..seconds {
+            let el = elevation_deg(prop, start + Duration::seconds(k), observer).unwrap();
+            match (open, el >= mask) {
+                (None, true) => open = Some(k),
+                (Some(k0), false) => {
+                    runs.push((start + Duration::seconds(k0), start + Duration::seconds(k)));
+                    open = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(k0) = open {
+            runs.push((
+                start + Duration::seconds(k0),
+                start + Duration::seconds(seconds),
+            ));
+        }
+        runs
+    }
+
+    /// Regression for the pre-1.2.0 search, which sampled every 116 s for the ISS and missed
+    /// passes shorter than that. Each case holds a pass that fell between two of those samples:
+    /// 36 s above 45° at Sydney, 2.5 h after epoch, and 27 s above 60° at Everett, 14.4 h after.
+    #[test]
+    fn finds_every_short_pass_a_one_second_scan_finds() {
+        let tle = Tle::from_lines(None, ISS_LINE1, ISS_LINE2).unwrap();
+        let prop = Propagator::new(&tle).unwrap();
+        let sydney = ObserverLocation {
+            latitude: -33.8688,
+            longitude: 151.2093,
+            elevation: 0.0,
+        };
+
+        for (station, mask, hours, short_pass_s) in
+            [(sydney, 45.0, 6, 36), (everett(), 60.0, 16, 27)]
+        {
+            let seconds = hours * 3600;
+            let (start, end) = (tle.epoch, tle.epoch + Duration::seconds(seconds));
+            let scan = passes_by_one_second_scan(&prop, station, start, seconds, mask);
+            let found = prop.predict_passes(station, start, end, mask).unwrap();
+
+            // The fixture must still contain the short pass it was chosen for.
+            assert!(
+                scan.iter()
+                    .any(|(a, b)| (*b - *a).num_seconds() == short_pass_s),
+                "mask {mask}: expected a {short_pass_s} s pass in the scan, got {scan:?}"
+            );
+            assert_eq!(found.len(), scan.len(), "mask {mask}: pass count");
+            for (pass, (first_above, first_below)) in found.iter().zip(&scan) {
+                // The scan sees AOS as the first whole second at or above the mask, so the
+                // true crossing lies in the second before it; likewise for LOS.
+                let aos_lag = (*first_above - pass.aos).num_milliseconds();
+                let los_lag = (*first_below - pass.los).num_milliseconds();
+                assert!((0..=1000).contains(&aos_lag), "AOS off by {aos_lag} ms");
+                assert!((0..=1000).contains(&los_lag), "LOS off by {los_lag} ms");
+                assert!(pass.max_elevation_deg >= mask);
+            }
+        }
+    }
+
+    #[test]
+    fn nan_elevation_mask_finds_nothing() {
+        let tle = Tle::from_lines(None, ISS_LINE1, ISS_LINE2).unwrap();
+        let prop = Propagator::new(&tle).unwrap();
+        let passes = prop
+            .predict_passes(
+                everett(),
+                tle.epoch,
+                tle.epoch + Duration::days(1),
+                f64::NAN,
+            )
+            .unwrap();
+        assert!(passes.is_empty());
+    }
+
+    #[test]
+    fn mask_below_every_elevation_gives_one_pass_spanning_the_window() {
+        let tle = Tle::from_lines(None, ISS_LINE1, ISS_LINE2).unwrap();
+        let prop = Propagator::new(&tle).unwrap();
+        let (start, end) = (tle.epoch, tle.epoch + Duration::hours(6));
+        let passes = prop.predict_passes(everett(), start, end, -91.0).unwrap();
+        assert_eq!(passes.len(), 1);
+        assert_eq!((passes[0].aos, passes[0].los), (start, end));
+        // And a mask nothing can reach gives none.
+        assert!(
+            prop.predict_passes(everett(), start, end, 91.0)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

@@ -16,7 +16,8 @@
 | Satellite look angles — slant range | ≤ 75 m vs. Skyfield (same TLE) |
 | Satellite look angles — range rate | ≤ 0.41 m/s vs. Skyfield (same TLE); < 1 m/s vs. its own d(range)/dt |
 | Atmospheric refraction (`refraction_deg`) | ~0.1′ above 15° elevation; weather-limited (several ′) near the horizon |
-| Satellite pass prediction (`predict_passes`) | AOS/LOS times typically within ~1 minute of external tools; max elevation within a few degrees | Coarse scan step, bisection/ternary refinement, same frame/TLE limitations as look angles; GEO-like orbits use a simplified visibility model |
+| Satellite pass prediction (`predict_passes`) — completeness | From 1.2.0: every pass at least as long as the minimum step is found (1 s in low Earth orbit, up to 15 s for slow orbits): 7074 of 7074 passes of a one-second brute-force scan, none spurious. The search advances in safe steps derived from a bound on how fast elevation can change, so it cannot skip a pass. Before 1.2.0 it could miss any pass shorter than 1/48 of the period (116 s for the ISS): 3.3 % of that set. Near-geosynchronous orbits use a simplified all-or-nothing model instead |
+| Satellite pass prediction (`predict_passes`) — timing | AOS/LOS refined to 1 ms of the model's own crossing; typically within ~1 minute of external tools and max elevation within a few degrees, which reflects the frame and element-set limits of look angles, not the search |
 | Satellite `sgp4_teaching` (two-body scaffold) | Matches Kepler period from TLE mean motion; **does not** match SGP4 state (documented large ‖Δ**r**‖ vs `sgp4`) | Not a propagator; deep-space / low-n element sets rejected by `teaching_supported` |
 | Planet positions (truncated VSOP87D) | a few arcminutes (vs. JPL Horizons at J2000.0) |
 

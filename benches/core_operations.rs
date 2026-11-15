@@ -19,6 +19,9 @@
 //!   trig. The relevant cost for per-frame eclipse checks downstream.
 //! - **`look_angles_reused`** / **`look_angles_with_eop_reused`** — topocentric look angles on a
 //!   prebuilt `Propagator`, without and with Earth orientation (IAU 1982 GMST + polar motion).
+//! - **`predict_passes_24h`** — a full day of ISS passes for one station on a prebuilt
+//!   `Propagator`, at a 10° mask (a handful of long passes) and at a 60° mask (rare, short
+//!   ones). The cost of one satellite-station pair in a contact-planning loop.
 //! - **`gcrf_to_itrf`** — one state through IAU 2006 precession + IAU 2000B nutation + GAST +
 //!   polar motion (the per-sample cost of an operator ephemeris in GCRF/EME2000).
 
@@ -135,6 +138,31 @@ fn bench_ground_track(c: &mut Criterion) {
     });
 }
 
+/// A day of passes for one station: the unit of work in multi-station contact planning.
+fn bench_predict_passes(c: &mut Criterion) {
+    let tle = iss_tle();
+    let prop = Propagator::new(&tle).unwrap();
+    let obs = ObserverLocation {
+        latitude: 47.9088,
+        longitude: -122.2503,
+        elevation: 0.0,
+    };
+    let start = tle.epoch;
+    let end = start + Duration::hours(24);
+    for (name, mask) in [
+        ("predict_passes_24h_mask10", 10.0),
+        ("predict_passes_24h_mask60", 60.0),
+    ] {
+        c.bench_function(name, |b| {
+            b.iter(|| {
+                black_box(&prop)
+                    .predict_passes(obs, black_box(start), black_box(end), mask)
+                    .unwrap()
+            })
+        });
+    }
+}
+
 criterion_group!(
     benches,
     bench_tle_parse,
@@ -144,6 +172,7 @@ criterion_group!(
     bench_shadow_state_reused,
     bench_look_angles,
     bench_gcrf_to_itrf,
-    bench_ground_track
+    bench_ground_track,
+    bench_predict_passes
 );
 criterion_main!(benches);

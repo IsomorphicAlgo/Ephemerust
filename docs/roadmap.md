@@ -46,8 +46,19 @@ ITRF with IAU 2006 precession + IAU 2000B nutation, validated against astropy/ER
 `Propagator::look_angles_with_eop` and `topocentric_look_angles` for states that do not come
 from a TLE. Chronus Gateway uses these for its CCSDS OEM backend.
 
+**1.2.0 — Orbit Mean-Elements Messages (November 2026) — implemented, not yet released.**
+New `omm` module: OMM ingestion in JSON, KVN, XML and CSV with educational errors, catalog
+numbers up to nine digits, `Propagator::from_omm`, and `Propagator::predict_passes` /
+`ground_track` so one propagator serves many ground stations. TLEs with Alpha-5 catalog
+numbers parse. Validated against python-sgp4 to 0.024 mm ([omm.md](omm.md)). This was the
+prerequisite for the contact scheduler built on Ephemerust, which takes its satellites as
+OMMs.
+
 ### Remaining Phase 1 work
 
+- OMM follow-ups: an OMM writer (`Omm` is read-only today); header fields (`CREATION_DATE`,
+  `ORIGINATOR`) for element-set age checks; SGP4-XP is out of scope until the `sgp4` engine
+  supports it.
 - Satellite tracking follow-ups from [satellite-tracking-plan.md — Future work](satellite-tracking-plan.md#future-work) (Space-Track authenticated fetch if ever needed; external validation landed in 1.0.0).
 - Read IERS Bulletin A / finals files directly (today Earth orientation is passed by value).
 - Extend the VSOP87 series with more terms to push accuracy toward the arcsecond level.

@@ -16,7 +16,10 @@
 //!   bulletin for the ISS, not the full catalog).
 //!
 //! The fetched text usually contains **many** element sets; pair this module with
-//! [`crate::satellite::select_tle`] to pick one:
+//! [`crate::satellite::select_tle`] to pick one. The fetch does not interpret the body, so it
+//! serves Orbit Mean-Elements Messages equally (a provider's `FORMAT=json`, `kvn`, `xml` or
+//! `csv` answer): pass that text to [`crate::omm::select_omm`] or
+//! [`crate::omm::Omm::parse_all`].
 //!
 //! ```no_run
 //! use ephemerust::net::fetch_tle_text;
@@ -102,7 +105,9 @@ fn check_url_policy(url: &str) -> Result<()> {
 /// and scheme policy described in the [module docs](self), sending a descriptive
 /// `User-Agent` that identifies Ephemerust and its repository. The body is decoded as
 /// UTF-8 and returned untouched; pass it to [`crate::satellite::select_tle`] (bulletins
-/// with many objects) or [`crate::satellite::Tle::parse`] (exactly one object).
+/// with many objects) or [`crate::satellite::Tle::parse`] (exactly one object). Despite the
+/// name, the text may equally be an OMM answer, for [`crate::omm::select_omm`] or
+/// [`crate::omm::Omm::parse_all`].
 ///
 /// # Errors
 ///

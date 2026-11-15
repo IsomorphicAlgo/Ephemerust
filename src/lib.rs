@@ -19,7 +19,7 @@
 //! - **Document the physics, not just the code.** Each public item explains the physical
 //!   reasoning and the conventions (frames, units, epochs) it assumes.
 //! - **Errors are teaching moments.** Failures explain *what* was expected and *why*, so the
-//!   library is instructive even when input is wrong (see [`TleError`]).
+//!   library is instructive even when input is wrong (see [`TleError`] and [`OmmError`]).
 //!
 //! ## Module map
 //!
@@ -30,9 +30,10 @@
 //! | [`celestial`] | Sun/Moon position and rise/set; dispatch to planets |
 //! | [`eclipse`] | Earth-shadow geometry: sunlit / penumbra / umbra classification and entry/exit search |
 //! | [`frames`] | Earth orientation (UT1−UTC, polar motion), leap seconds, GCRF/EME2000/TEME ↔ ITRF with IAU 2006/2000B precession–nutation |
+//! | [`omm`] | Orbit Mean-Elements Messages (JSON, KVN, XML, CSV): the keyword-based successor to the TLE, required for catalog numbers above 99999 |
 //! | [`orbital`] | Kepler's equation, orbital period, elements → state vectors |
 //! | [`planets`] | VSOP87 planetary ephemeris |
-//! | [`satellite`] | TLE / SGP4 propagation, TEME → ECEF → geodetic, look angles, passes, ground track |
+//! | [`satellite`] | TLE / SGP4 propagation (from a TLE or an OMM), TEME → ECEF → geodetic, look angles, passes, ground track |
 //! | [`sgp4_teaching`] | Educational two-body / Kepler scaffolding vs the real `sgp4` model (`docs/sgp4.md`) |
 //!
 //! ## Conventions
@@ -68,7 +69,7 @@
 //! |---------|---------|
 //! | `cli` *(default)* | Builds the `ephemerust` binary (pulls `clap` and `env_logger`). Library users can set `default-features = false`. |
 //! | `network` | Enables the `net` module (bounded HTTPS fetch of CelesTrak-style element-set
-//!   bulletins via `ureq`/rustls) and the `track` CLI flag `--tle-url`. See `http_plan.md`
+//!   bulletins, TLE or OMM, via `ureq`/rustls) and the `track` CLI flag `--tle-url`. See `http_plan.md`
 //!   for the operational requirements this implementation follows. |
 //!
 //! ## Example
@@ -96,6 +97,7 @@ pub mod eclipse;
 pub mod frames;
 #[cfg(feature = "network")]
 pub mod net;
+pub mod omm;
 pub mod orbital;
 pub mod planets;
 pub mod satellite;
@@ -136,8 +138,13 @@ pub mod error {
         #[error(transparent)]
         Tle(#[from] crate::satellite::TleError),
 
+        /// A structured, educational failure to read an Orbit Mean-Elements Message. The
+        /// detailed message comes from the wrapped [`crate::omm::OmmError`].
+        #[error(transparent)]
+        Omm(#[from] crate::omm::OmmError),
+
         /// A satellite operation failed at runtime (e.g. propagation diverged), as opposed to
-        /// a TLE-format problem (which uses [`AstroError::Tle`]).
+        /// an element-set format problem (which uses [`AstroError::Tle`] or [`AstroError::Omm`]).
         #[error("Satellite error: {0}")]
         SatelliteError(String),
 
@@ -148,11 +155,12 @@ pub mod error {
 
     impl AstroError {
         /// Returns a short, actionable formatting hint suitable for display on a dedicated
-        /// `Hint:` line after the error. Currently provided for TLE-parsing errors, where the
-        /// hint explains how to correct the input; other variants return `None`.
+        /// `Hint:` line after the error. Currently provided for TLE- and OMM-parsing errors,
+        /// where the hint explains how to correct the input; other variants return `None`.
         pub fn hint(&self) -> Option<&'static str> {
             match self {
                 AstroError::Tle(e) => e.hint(),
+                AstroError::Omm(e) => e.hint(),
                 _ => None,
             }
         }
@@ -179,6 +187,9 @@ pub use eclipse::{ShadowState, ShadowTransition, shadow_state, shadow_transition
 
 // Re-export Earth-orientation and frame types
 pub use frames::{EarthOrientation, InertialFrame};
+
+// Re-export Orbit Mean-Elements Message types
+pub use omm::{Omm, OmmError, OmmFormat, select_omm};
 
 // Re-export planet types
 pub use planets::{Planet, calculate_planet_position};

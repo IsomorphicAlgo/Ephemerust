@@ -1,6 +1,6 @@
 [package]
 name = "ephemerust"
-version = "1.1.2"
+version = "1.2.0"
 edition = "2024"
 # MSRV: matches Chronus Gateway. Raising it is treated as a minor-version change (see readme
 # "Versioning"); CI builds on both this floor and the latest stable toolchain.
@@ -26,7 +26,8 @@ all-features = true
 # working; library users can opt out with `default-features = false` to skip clap/env_logger.
 default = ["cli"]
 cli = ["dep:clap", "dep:env_logger"]
-# HTTPS TLE fetch: enables the `net` library module and the `track` CLI flag `--tle-url`.
+# HTTPS element-set fetch (TLE or OMM): enables the `net` library module and the `track` CLI
+# flag `--tle-url` (alias `--omm-url`).
 # Pulls the minimal blocking HTTP client `ureq` (rustls TLS). See http_plan.md.
 network = ["dep:ureq"]
 

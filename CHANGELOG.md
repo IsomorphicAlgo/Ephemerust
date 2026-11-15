@@ -14,6 +14,63 @@ version carried breaking changes.)
 
 ## [Unreleased]
 
+Planned as **1.2.0**. Additive only: the 1.1 API is unchanged, and so are all numerical
+results for TLE input (the `track` output for a TLE is byte-for-byte the same, apart from the
+one new JSON key noted below).
+
+### Added
+
+- **Orbit Mean-Elements Message (OMM) support**: the new `omm` module. The public catalog ran
+  out of five-digit numbers in July 2026, so objects cataloged since then (100000 and up)
+  cannot be written as a plain TLE; the OMM carries the same SGP4 mean elements under named
+  keywords, with a catalog number of up to nine digits. See [`docs/omm.md`](docs/omm.md).
+  - `Omm`: the parsed, validated message, with fields that mirror `Tle`.
+    `Omm::parse` (exactly one message), `Omm::parse_all` (every message, in order),
+    `Omm::from_file`, `FromStr`, and `select_omm` (one message by name or catalog number, the
+    counterpart of `select_tle`).
+  - Four serializations, detected from the text by `OmmFormat::detect`: **JSON** (CelesTrak
+    and Space-Track layouts; numbers or strings), **KVN** and **XML** (CCSDS 502.0-B-3), and
+    **CSV**. All four reduce to the same keyword/value pairs and share one validator.
+  - `OmmError`: structured, educational errors in the style of `TleError` (missing keyword,
+    unreadable value, out-of-range element, unsupported theory / frame / time system, and the
+    position and name of the failing message in a multi-object file), each with a `hint()`.
+    Carried by the new `AstroError::Omm` variant.
+  - `From<&Tle> for Omm`, so code written against `Omm` accepts both sources.
+- **`Propagator::from_omm`** and **`Propagator::from_omm_with_model`**: an OMM yields the same
+  reusable propagator as a TLE, so state, sub-point, look angles and shadow work unchanged.
+- **`Propagator::predict_passes`** and **`Propagator::ground_track`**: the pass search and
+  ground-track sampling as methods on an initialized propagator. They serve OMM input, and
+  they let one satellite be checked against several ground stations with a single SGP4
+  initialization. The free functions `predict_passes` / `ground_track` now delegate to them
+  and return identical results.
+- **Alpha-5 catalog numbers in TLEs**: `Tle::parse` reads the letter-prefixed catalog field
+  (`A0000` = 100000 … `Z9999` = 339999), and `select_tle` matches such entries by number.
+  Previously these element sets were rejected as a non-numeric field.
+- **`track` accepts an OMM** wherever it accepts a TLE. The format is detected from the
+  content, so `--tle-file`, `--tle` and `--tle-url` work as they are; `--omm-file`, `--omm`,
+  `--omm-url` and `--name` are aliases. Human output for an OMM starts with an
+  `Element set:   OMM (<format>)` line.
+
+### Changed
+
+- `track --format json` gains a top-level `"element_set_format"` key (`"tle"` or `"omm"`).
+  The element-set summary stays under the `tle` key for both formats.
+- The error for an unreadable TLE catalog-number field now describes Alpha-5 as well as plain
+  digits.
+
+### Validation
+
+- `tests/omm_reference.rs` compares OMM-driven propagation with python-sgp4 2.27 (the
+  reference C++ SGP4 of Vallado et al.; WGS84) for a CelesTrak sample and three synthetic
+  objects numbered 100123, 340000 and 799500123 (low orbit, 12-hour Molniya, geostationary):
+  worst case **0.024 mm** in position and **0.008 µm/s** in velocity over 48 samples from −1
+  to +2 days. The fixtures and the generator script are in `tests/data/omm/`.
+- An OMM and the TLE published for the same element set propagate to the same state (no
+  difference for the CelesTrak sample). The test bound is 2 cm, to allow for the epoch, which
+  the two formats round differently.
+- Tests with `--all-features`: 212 unit, 33 integration and 45 doc tests (149, 19 and 36 in
+  1.1.2).
+
 ## [1.1.2] - 2026-10-26
 
 Security patch. No API or numerical changes.

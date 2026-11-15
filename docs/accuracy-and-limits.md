@@ -11,6 +11,7 @@
 | RA/Dec ↔ Alt/Az | sub-arcsecond (floating-point limited) |
 | ECEF ↔ ECI round-trip | ~1 mm at Earth scale |
 | ECEF ↔ WGS84 geodetic round-trip | ~1 mm at Earth scale |
+| OMM-driven propagation (`Propagator::from_omm`) | ≤ 0.024 mm and ≤ 0.008 µm/s vs. python-sgp4 (reference C++ SGP4, WGS84) for the same OMM; same state as the TLE of the same element set (test bound 2 cm for epoch rounding) |
 | Satellite look angles — direction (az/el) | ≤ 0.34 arcmin vs. Skyfield (same TLE, 24 h, all elevations) |
 | Satellite look angles — slant range | ≤ 75 m vs. Skyfield (same TLE) |
 | Satellite look angles — range rate | ≤ 0.41 m/s vs. Skyfield (same TLE); < 1 m/s vs. its own d(range)/dt |

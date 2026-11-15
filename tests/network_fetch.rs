@@ -66,6 +66,13 @@ fn serve_one(stream: &mut TcpStream) {
 
     match path {
         "/stations.txt" => respond(stream, "200 OK", &stations_body(), &[]),
+        // An OMM answer, as a provider gives for `FORMAT=json` (query string included).
+        "/gp.php?GROUP=example&FORMAT=json" => respond(
+            stream,
+            "200 OK",
+            include_str!("data/omm/high_catalog.json"),
+            &[("Content-Type", "application/json")],
+        ),
         "/redirect" => respond(
             stream,
             "301 Moved Permanently",
@@ -210,4 +217,47 @@ fn cli_multi_object_url_without_tle_name_lists_available_objects() {
         stderr.contains("select one") && stderr.contains(ISS_NAME),
         "error should list the available objects; stderr was:\n{stderr}"
     );
+}
+
+#[test]
+fn fetches_an_omm_answer_and_selects_objects() {
+    let (base, hits) = spawn_fixture_server();
+
+    let text = fetch_tle_text(&format!("{base}/gp.php?GROUP=example&FORMAT=json"))
+        .expect("fetch succeeds");
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    let all = ephemerust::omm::Omm::parse_all(&text).expect("three messages");
+    assert_eq!(all.len(), 3);
+    let geo = ephemerust::omm::select_omm(&text, Some("799500123")).expect("nine digits");
+    assert_eq!(geo.name.as_deref(), Some("EXAMPLE-GEO"));
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn cli_omm_url_with_name_tracks_selected_object() {
+    let (base, _) = spawn_fixture_server();
+
+    let output = std::process::Command::new(binary())
+        .args([
+            "track",
+            "--omm-url",
+            &format!("{base}/gp.php?GROUP=example&FORMAT=json"),
+            "--name",
+            "340000",
+            "--mode",
+            "tle",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("the ephemerust binary should run");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stderr was:\n{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).expect("JSON output");
+    assert_eq!(v["element_set_format"], "omm");
+    assert_eq!(v["tle"]["catalog_number"], 340000);
+    assert_eq!(v["tle"]["name"], "EXAMPLE-MOLNIYA");
 }

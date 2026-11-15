@@ -20,7 +20,8 @@ ephemerust/
     ├── coordinates.rs  # RA/Dec ↔ Alt/Az, ECEF ↔ ECI, WGS84 geodetic
     ├── celestial.rs    # Sun/Moon positions, rise/set, Sun position vector
     ├── eclipse.rs      # Earth-shadow geometry: sunlit/penumbra/umbra + entry/exit search
-    ├── net.rs          # bounded HTTPS TLE fetch (compiled only with `--features network`)
+    ├── net.rs          # bounded HTTPS element-set fetch (compiled only with `--features network`)
+    ├── omm.rs          # Orbit Mean-Elements Messages: JSON/KVN/XML/CSV readers, one validator
     ├── orbital.rs      # Kepler's equation, period, state vectors
     ├── planets.rs      # VSOP87 planetary positions
     ├── satellite.rs    # TLE/SGP4, TEME→ECEF→geodetic, look angles, passes, ground track
@@ -37,9 +38,10 @@ ephemerust/
 | `celestial.rs` | Sun/Moon position and rise/set; Sun position vector; dispatches planet calls |
 | `eclipse.rs` | Conical Earth-shadow model: `ShadowState` classification and `shadow_transitions` entry/exit search |
 | `net.rs` | Bounded HTTPS element-set fetch (`network` feature only; see `http_plan.md`) |
+| `omm.rs` | OMM ingestion: `Omm`, `OmmError`, `OmmFormat`, `select_omm`; each serialization is reduced to keyword/value pairs and validated by one code path (see `docs/omm.md`) |
 | `orbital.rs` | Orbital mechanics |
 | `planets.rs` | VSOP87 ephemeris (complex and self-contained) |
-| `satellite.rs` | TLE parsing/validation, `Propagator`/SGP4, subpoints, look angles, passes, ground track, `select_tle` |
+| `satellite.rs` | TLE parsing/validation (incl. Alpha-5 catalog numbers), `Propagator`/SGP4 from a TLE or an OMM, subpoints, look angles, passes, ground track, `select_tle` |
 | `sgp4_teaching.rs` | Educational Kepler / mean-motion helpers vs `sgp4` (see `docs/sgp4.md`) |
 
 **Separation rationale**: `celestial.rs` handles the simpler Sun/Moon models and routes

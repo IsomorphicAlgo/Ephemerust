@@ -22,6 +22,16 @@
 //! - Positions are kilometres, velocities kilometres per second, angles degrees, and times
 //!   UTC unless stated otherwise.
 //!
+//! # Element-set sources
+//!
+//! Two formats carry the same SGP4 mean elements. [`Tle`] is the classic fixed-column
+//! Two-Line Element set; its five catalog-number columns hold plain digits up to 99999 or the
+//! Alpha-5 letter form up to 339999. [`Omm`] is the keyword-based
+//! Orbit Mean-Elements Message, with no such limit (see [`crate::omm`]). Either one initializes
+//! a [`Propagator`] ([`Propagator::new`] / [`Propagator::from_omm`]), and every computation in
+//! this module is available as a method on it. The free functions that take a `&Tle` are
+//! one-shot conveniences over the same methods.
+//!
 //! The staged implementation plan lives in `docs/satellite-tracking-plan.md`. Companion theory
 //! for the SGP4 layer is in `docs/sgp4.md`, with the non-operational [`crate::sgp4_teaching`]
 //! module for Kepler / mean-motion pedagogy. Implemented so
@@ -54,6 +64,7 @@
 use crate::celestial::ObserverLocation;
 use crate::coordinates::{Ecef, Eci, ecef_to_geodetic_wgs84, eci_to_ecef, geodetic_wgs84_to_ecef};
 use crate::frames::{EarthOrientation, InertialFrame, inertial_to_itrf};
+use crate::omm::Omm;
 use crate::{AstroError, Result};
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use serde::Serialize;
@@ -257,7 +268,8 @@ pub struct Tle {
     /// Second data line of the element set (69 columns).
     pub line2: String,
 
-    /// NORAD satellite catalog number.
+    /// NORAD satellite catalog number. Numbers from 100000 to 339999 are read from the
+    /// Alpha-5 form of the field (`A0000` = 100000); larger ones need an [`Omm`].
     pub catalog_number: u32,
     /// Classification: `U` (unclassified), `C` (classified), or `S` (secret).
     pub classification: char,
@@ -397,8 +409,10 @@ impl Tle {
         let l1 = validate_line(line1, 1)?;
         let l2 = validate_line(line2, 2)?;
 
-        let catalog_1 = parse_u32(&FieldSpec::new("satellite catalog number", 1, 3, 7), l1)?;
-        let catalog_2 = parse_u32(&FieldSpec::new("satellite catalog number", 2, 3, 7), l2)?;
+        let catalog_1 =
+            parse_catalog_number(&FieldSpec::new("satellite catalog number", 1, 3, 7), l1)?;
+        let catalog_2 =
+            parse_catalog_number(&FieldSpec::new("satellite catalog number", 2, 3, 7), l2)?;
         if catalog_1 != catalog_2 {
             return Err(TleError::CatalogMismatch {
                 line1: catalog_1,
@@ -500,7 +514,10 @@ impl BulletinEntry<'_> {
     fn display_name(&self) -> String {
         match self.name {
             Some(n) => n.to_string(),
-            None => format!("catalog {}", self.catalog_str()),
+            None => match decode_catalog_number(self.catalog_str()) {
+                Some(number) => format!("catalog {number}"),
+                None => format!("catalog {}", self.catalog_str()),
+            },
         }
     }
 }
@@ -618,8 +635,12 @@ pub fn select_tle(text: &str, selector: Option<&str>) -> Result<Tle> {
         Some(sel) => {
             let sel_trimmed = sel.trim();
             let sel_lower = sel_trimmed.to_lowercase();
-            let is_numeric =
-                !sel_trimmed.is_empty() && sel_trimmed.bytes().all(|b| b.is_ascii_digit());
+            let sel_number =
+                if !sel_trimmed.is_empty() && sel_trimmed.bytes().all(|b| b.is_ascii_digit()) {
+                    sel_trimmed.parse::<u32>().ok()
+                } else {
+                    None
+                };
 
             let matches: Vec<&BulletinEntry<'_>> = entries
                 .iter()
@@ -627,9 +648,9 @@ pub fn select_tle(text: &str, selector: Option<&str>) -> Result<Tle> {
                     let name_hit = e
                         .name
                         .is_some_and(|n| n.to_lowercase().contains(&sel_lower));
-                    let catalog_hit = is_numeric
-                        && e.catalog_str().trim_start_matches('0')
-                            == sel_trimmed.trim_start_matches('0');
+                    // Compared as numbers, so leading zeros and Alpha-5 entries both match.
+                    let catalog_hit = sel_number.is_some()
+                        && decode_catalog_number(e.catalog_str()) == sel_number;
                     name_hit || catalog_hit
                 })
                 .collect();
@@ -765,6 +786,43 @@ fn parse_u32(spec: &FieldSpec, line: &str) -> std::result::Result<u32, TleError>
         .map_err(|_| spec.error(text.trim(), "expected a base-10 integer"))
 }
 
+/// Decodes the five catalog-number columns, in plain digits or in **Alpha-5**.
+///
+/// Five columns hold at most 99999, and the public catalog used up its five-digit numbers in
+/// July 2026 (see [`crate::omm`]). Alpha-5 keeps
+/// the column layout by replacing the *first* digit with a letter that stands for a two-digit
+/// number: `A` = 10, `B` = 11, … `Z` = 33, skipping `I` and `O` because they are easily
+/// mistaken for 1 and 0. `A0000` is therefore 100000 and `Z9999` is 339999, the largest number
+/// a TLE can carry. Anything above that needs an OMM (see [`crate::omm`]).
+fn decode_catalog_number(text: &str) -> Option<u32> {
+    let text = text.trim();
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    let lead = match first {
+        'A'..='H' => first as u32 - 'A' as u32 + 10,
+        'J'..='N' => first as u32 - 'J' as u32 + 18,
+        'P'..='Z' => first as u32 - 'P' as u32 + 23,
+        // Plain digits (or anything else, which fails here exactly as it did before Alpha-5).
+        _ => return text.parse().ok(),
+    };
+    let rest = chars.as_str();
+    if rest.len() != 4 || !rest.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(lead * 10_000 + rest.parse::<u32>().ok()?)
+}
+
+fn parse_catalog_number(spec: &FieldSpec, line: &str) -> std::result::Result<u32, TleError> {
+    let text = spec.text(line);
+    decode_catalog_number(text).ok_or_else(|| {
+        spec.error(
+            text.trim(),
+            "expected a base-10 integer, or an Alpha-5 number: one capital letter other than \
+             I or O followed by four digits (A0000 = 100000 … Z9999 = 339999)",
+        )
+    })
+}
+
 /// Parses a decimal that may use a leading decimal point (e.g. `-.00002218`).
 fn parse_f64_loose(spec: &FieldSpec, line: &str) -> std::result::Result<f64, TleError> {
     let s = spec.text(line).trim();
@@ -889,7 +947,12 @@ pub enum PropagationModel {
 /// "did I remember to initialize?" state to check at runtime.
 ///
 /// [`ground_track`] and [`predict_passes`] use a `Propagator` internally, so they pay
-/// initialization once per call rather than once per sample.
+/// initialization once per call rather than once per sample. Their method forms,
+/// [`Propagator::ground_track`] and [`Propagator::predict_passes`], let one initialization
+/// serve several calls, for example one satellite against many ground stations.
+///
+/// A propagator is built from a [`Tle`] ([`Propagator::new`]) or from an [`Omm`]
+/// ([`Propagator::from_omm`]); after construction the two are indistinguishable.
 ///
 /// # Example
 ///
@@ -917,6 +980,16 @@ pub struct Propagator {
     elements: sgp4::Elements,
     constants: sgp4::Constants,
     model: PropagationModel,
+    shape: OrbitShape,
+}
+
+/// The three mean elements the pass search reads to choose its sampling step and to spot a
+/// near-geostationary orbit, kept exactly as the source element set stated them.
+#[derive(Debug, Clone, Copy)]
+struct OrbitShape {
+    mean_motion_rev_per_day: f64,
+    inclination_deg: f64,
+    eccentricity: f64,
 }
 
 impl Propagator {
@@ -944,6 +1017,109 @@ impl Propagator {
                     ))
                 })?;
 
+        Self::from_elements(
+            elements,
+            model,
+            OrbitShape {
+                mean_motion_rev_per_day: tle.mean_motion,
+                inclination_deg: tle.inclination_deg,
+                eccentricity: tle.eccentricity,
+            },
+        )
+    }
+
+    /// Initializes a propagator from an Orbit Mean-Elements Message with
+    /// [`PropagationModel::Modern`] (WGS84 + IAU).
+    ///
+    /// An OMM for SGP4 holds the same mean elements as a TLE, so the result is the same kind
+    /// of propagator and every method on it behaves identically. This is the route for objects
+    /// whose catalog number does not fit a TLE (see [`crate::omm`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AstroError::SatelliteError`] if SGP4 cannot be initialized from the elements
+    /// (for example, a mean motion and eccentricity that put perigee inside the Earth).
+    ///
+    /// # Example
+    ///
+    /// The ISS element set as an OMM gives the same state as the TLE it was published with:
+    ///
+    /// ```
+    /// use ephemerust::omm::Omm;
+    /// use ephemerust::satellite::{Propagator, Tle};
+    ///
+    /// let tle = Tle::parse(
+    ///     "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992\n\
+    ///      2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008",
+    /// )?;
+    /// let omm = Omm::parse(
+    ///     r#"{"OBJECT_NAME":"ISS (ZARYA)","OBJECT_ID":"1998-067A","NORAD_CAT_ID":25544,
+    ///         "EPOCH":"2020-07-12T21:16:01.000416","MEAN_MOTION":15.49507896,
+    ///         "ECCENTRICITY":0.0001413,"INCLINATION":51.6461,"RA_OF_ASC_NODE":221.2784,
+    ///         "ARG_OF_PERICENTER":89.1723,"MEAN_ANOMALY":280.4612,"BSTAR":-0.31515E-4,
+    ///         "MEAN_MOTION_DOT":-0.2218E-4,"MEAN_MOTION_DDOT":0}"#,
+    /// )?;
+    ///
+    /// let t = tle.epoch + chrono::Duration::minutes(90);
+    /// let from_tle = Propagator::new(&tle)?.propagate(t)?;
+    /// let from_omm = Propagator::from_omm(&omm)?.propagate(t)?;
+    /// for axis in 0..3 {
+    ///     assert!((from_tle.position_km[axis] - from_omm.position_km[axis]).abs() < 1e-6);
+    /// }
+    /// # Ok::<(), ephemerust::AstroError>(())
+    /// ```
+    pub fn from_omm(omm: &Omm) -> Result<Self> {
+        Self::from_omm_with_model(omm, PropagationModel::default())
+    }
+
+    /// Initializes a propagator from an OMM with an explicit [`PropagationModel`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Propagator::from_omm`].
+    pub fn from_omm_with_model(omm: &Omm, model: PropagationModel) -> Result<Self> {
+        let elements = sgp4::Elements {
+            object_name: omm.name.clone(),
+            international_designator: omm.international_designator.clone(),
+            // SGP4 does not read the catalog number; 0 stands in for "not cataloged".
+            norad_id: u64::from(omm.catalog_number.unwrap_or(0)),
+            classification: match omm.classification {
+                'C' => sgp4::Classification::Classified,
+                'S' => sgp4::Classification::Secret,
+                _ => sgp4::Classification::Unclassified,
+            },
+            datetime: omm.epoch.naive_utc(),
+            mean_motion_dot: omm.mean_motion_dot,
+            mean_motion_ddot: omm.mean_motion_ddot,
+            drag_term: omm.bstar,
+            element_set_number: u64::from(omm.element_set_number),
+            inclination: omm.inclination_deg,
+            right_ascension: omm.raan_deg,
+            eccentricity: omm.eccentricity,
+            argument_of_perigee: omm.arg_perigee_deg,
+            mean_anomaly: omm.mean_anomaly_deg,
+            mean_motion: omm.mean_motion,
+            revolution_number: u64::from(omm.revolution_number),
+            ephemeris_type: omm.ephemeris_type,
+        };
+
+        Self::from_elements(
+            elements,
+            model,
+            OrbitShape {
+                mean_motion_rev_per_day: omm.mean_motion,
+                inclination_deg: omm.inclination_deg,
+                eccentricity: omm.eccentricity,
+            },
+        )
+    }
+
+    /// Shared tail of every constructor: derives the SGP4 constants for `model`.
+    fn from_elements(
+        elements: sgp4::Elements,
+        model: PropagationModel,
+        shape: OrbitShape,
+    ) -> Result<Self> {
         let constants = match model {
             PropagationModel::Modern => sgp4::Constants::from_elements(&elements).map_err(|e| {
                 AstroError::SatelliteError(format!("invalid orbital elements for propagation: {e}"))
@@ -961,6 +1137,7 @@ impl Propagator {
             elements,
             constants,
             model,
+            shape,
         })
     }
 
@@ -1079,6 +1256,217 @@ impl Propagator {
             eop,
         );
         topocentric_look_angles(r, v, observer)
+    }
+
+    /// Predicts visible passes of this element set over `observer` in a UTC time window.
+    ///
+    /// This is the same search as the free function [`predict_passes`], on an
+    /// already-initialized propagator. It is the form to use when the element set is an
+    /// [`Omm`], and when one satellite is checked against **several ground stations**: the SGP4
+    /// initialization is paid once and each station only costs its own search.
+    ///
+    /// `window_end` is **exclusive**, and `observer.elevation` is metres above the WGS84
+    /// ellipsoid, as for [`Propagator::look_angles`]. `min_elevation_deg` is the elevation
+    /// mask: a pass begins and ends where the satellite crosses it.
+    ///
+    /// # Errors
+    ///
+    /// Propagation or coordinate errors from [`Propagator::look_angles`].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use chrono::Duration;
+    /// use ephemerust::omm::Omm;
+    /// use ephemerust::{ObserverLocation, Propagator};
+    ///
+    /// let omm = Omm::parse(
+    ///     r#"{"OBJECT_NAME":"ISS (ZARYA)","NORAD_CAT_ID":25544,
+    ///         "EPOCH":"2020-07-12T21:16:01.000416","MEAN_MOTION":15.49507896,
+    ///         "ECCENTRICITY":0.0001413,"INCLINATION":51.6461,"RA_OF_ASC_NODE":221.2784,
+    ///         "ARG_OF_PERICENTER":89.1723,"MEAN_ANOMALY":280.4612,"BSTAR":-0.31515E-4}"#,
+    /// )?;
+    /// let prop = Propagator::from_omm(&omm)?;
+    ///
+    /// // One propagator, two ground stations.
+    /// let everett = ObserverLocation { latitude: 47.9088, longitude: -122.2503, elevation: 0.0 };
+    /// let svalbard = ObserverLocation { latitude: 78.2298, longitude: 15.4078, elevation: 450.0 };
+    /// let (start, end) = (omm.epoch, omm.epoch + Duration::hours(24));
+    ///
+    /// let passes = prop.predict_passes(everett, start, end, 10.0)?;
+    /// assert!(!passes.is_empty());
+    /// assert!(passes.iter().all(|p| p.aos < p.los && p.max_elevation_deg >= 10.0));
+    ///
+    /// // The ISS (inclination 51.6°) never rises 10° above the horizon at 78° N.
+    /// assert!(prop.predict_passes(svalbard, start, end, 10.0)?.is_empty());
+    /// # Ok::<(), ephemerust::AstroError>(())
+    /// ```
+    pub fn predict_passes(
+        &self,
+        observer: ObserverLocation,
+        window_start: DateTime<Utc>,
+        window_end: DateTime<Utc>,
+        min_elevation_deg: f64,
+    ) -> Result<Vec<Pass>> {
+        if window_end <= window_start {
+            return Ok(Vec::new());
+        }
+
+        if is_geo_heuristic(&self.shape) {
+            return predict_passes_geo(self, observer, window_start, window_end, min_elevation_deg);
+        }
+
+        let dt = coarse_step_for_mean_motion(self.shape.mean_motion_rev_per_day);
+        let mut passes = Vec::new();
+
+        let mut prev_t = window_start;
+        let mut prev_el = elevation_deg(self, prev_t, observer)?;
+        let mut pending_aos: Option<DateTime<Utc>> = if prev_el >= min_elevation_deg {
+            Some(window_start)
+        } else {
+            None
+        };
+
+        let mut t = window_start + dt;
+        while t < window_end {
+            let el = elevation_deg(self, t, observer)?;
+
+            if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
+                let aos = bisect_elevation_rising(self, observer, min_elevation_deg, prev_t, t)?;
+                pending_aos = Some(aos);
+            } else if pending_aos.is_some()
+                && prev_el >= min_elevation_deg
+                && el < min_elevation_deg
+            {
+                let aos = pending_aos.take().expect("aos");
+                let los = bisect_elevation_falling(self, observer, min_elevation_deg, prev_t, t)?;
+                if los > aos {
+                    let (culm, max_el) = culmination_time_and_max_el(self, observer, aos, los)?;
+                    let la_aos = self.look_angles(aos, observer)?;
+                    let la_los = self.look_angles(los, observer)?;
+                    passes.push(Pass {
+                        aos,
+                        culmination: culm,
+                        los,
+                        max_elevation_deg: max_el,
+                        aos_azimuth_deg: la_aos.azimuth_deg,
+                        los_azimuth_deg: la_los.azimuth_deg,
+                    });
+                }
+            }
+
+            prev_t = t;
+            prev_el = el;
+            t += dt;
+        }
+
+        // Final segment up to exclusive window end.
+        let last_t = (window_end - Duration::milliseconds(1)).max(window_start);
+        if last_t > prev_t {
+            let el = elevation_deg(self, last_t, observer)?;
+            let opened_in_tail = if pending_aos.is_none()
+                && prev_el < min_elevation_deg
+                && el >= min_elevation_deg
+            {
+                pending_aos = Some(bisect_elevation_rising(
+                    self,
+                    observer,
+                    min_elevation_deg,
+                    prev_t,
+                    last_t,
+                )?);
+                true
+            } else {
+                false
+            };
+
+            if let Some(aos) = pending_aos {
+                if !opened_in_tail && prev_el >= min_elevation_deg && el < min_elevation_deg {
+                    let los = bisect_elevation_falling(
+                        self,
+                        observer,
+                        min_elevation_deg,
+                        prev_t,
+                        last_t,
+                    )?;
+                    if los > aos {
+                        let (culm, max_el) = culmination_time_and_max_el(self, observer, aos, los)?;
+                        let la_aos = self.look_angles(aos, observer)?;
+                        let la_los = self.look_angles(los, observer)?;
+                        passes.push(Pass {
+                            aos,
+                            culmination: culm,
+                            los,
+                            max_elevation_deg: max_el,
+                            aos_azimuth_deg: la_aos.azimuth_deg,
+                            los_azimuth_deg: la_los.azimuth_deg,
+                        });
+                    }
+                } else if el >= min_elevation_deg {
+                    let los = window_end;
+                    let los_sample = last_t;
+                    let (culm, max_el) =
+                        culmination_time_and_max_el(self, observer, aos, los_sample)?;
+                    let la_aos = self.look_angles(aos, observer)?;
+                    let la_los = self.look_angles(los_sample, observer)?;
+                    passes.push(Pass {
+                        aos,
+                        culmination: culm,
+                        los,
+                        max_elevation_deg: max_el,
+                        aos_azimuth_deg: la_aos.azimuth_deg,
+                        los_azimuth_deg: la_los.azimuth_deg,
+                    });
+                }
+            }
+        }
+
+        Ok(passes)
+    }
+
+    /// Samples this element set's **ground track** from `window_start` (inclusive) to
+    /// `window_end` (**exclusive**), every `step`.
+    ///
+    /// The same sampling as the free function [`ground_track`], on an already-initialized
+    /// propagator, so it also serves element sets that arrive as an [`Omm`].
+    ///
+    /// # Errors
+    ///
+    /// [`AstroError::SatelliteError`] if `step` is not strictly positive; otherwise
+    /// propagation or geodetic conversion errors from [`Propagator::subpoint`].
+    pub fn ground_track(
+        &self,
+        window_start: DateTime<Utc>,
+        window_end: DateTime<Utc>,
+        step: Duration,
+    ) -> Result<Vec<GroundTrackSample>> {
+        if step <= Duration::zero() {
+            return Err(AstroError::SatelliteError(
+                "ground_track step must be strictly positive".into(),
+            ));
+        }
+        if window_end <= window_start {
+            return Ok(Vec::new());
+        }
+
+        let span_ns = (window_end - window_start)
+            .num_nanoseconds()
+            .unwrap_or(i64::MAX)
+            .max(0);
+        let step_ns = step.num_nanoseconds().unwrap_or(i64::MAX).max(1);
+        let est = ((span_ns / step_ns) as usize).min(500_000);
+        let mut out = Vec::with_capacity(est);
+
+        let mut t = window_start;
+        while t < window_end {
+            let s = self.subpoint(t)?;
+            out.push(GroundTrackSample {
+                time: t,
+                subpoint: s,
+            });
+            t += step;
+        }
+        Ok(out)
     }
 }
 
@@ -1311,27 +1699,8 @@ pub fn ground_track_with_model(
         return Ok(Vec::new());
     }
 
-    let span_ns = (window_end - window_start)
-        .num_nanoseconds()
-        .unwrap_or(i64::MAX)
-        .max(0);
-    let step_ns = step.num_nanoseconds().unwrap_or(i64::MAX).max(1);
-    let est = ((span_ns / step_ns) as usize).min(500_000);
-    let mut out = Vec::with_capacity(est);
-
     // Initialize the SGP4 constants once; each sample is then a cheap propagation step.
-    let prop = Propagator::with_model(tle, model)?;
-
-    let mut t = window_start;
-    while t < window_end {
-        let s = prop.subpoint(t)?;
-        out.push(GroundTrackSample {
-            time: t,
-            subpoint: s,
-        });
-        t += step;
-    }
-    Ok(out)
+    Propagator::with_model(tle, model)?.ground_track(window_start, window_end, step)
 }
 
 /// Serializes ground-track samples as **CSV** (RFC 4180–style: header row, comma-separated).
@@ -1501,11 +1870,11 @@ fn elevation_deg(prop: &Propagator, t: DateTime<Utc>, observer: ObserverLocation
 
 /// Heuristic: near-geosynchronous element sets (≈1 rev/day, equatorial) use a simplified
 /// all-or-nothing visibility over the search window.
-fn is_geo_heuristic(tle: &Tle) -> bool {
-    tle.mean_motion > 0.98
-        && tle.mean_motion < 1.04
-        && tle.inclination_deg.abs() < 3.0
-        && tle.eccentricity < 0.02
+fn is_geo_heuristic(shape: &OrbitShape) -> bool {
+    shape.mean_motion_rev_per_day > 0.98
+        && shape.mean_motion_rev_per_day < 1.04
+        && shape.inclination_deg.abs() < 3.0
+        && shape.eccentricity < 0.02
 }
 
 fn predict_passes_geo(
@@ -1661,108 +2030,13 @@ pub fn predict_passes_with_model(
     }
 
     // Initialize the SGP4 constants once for the entire search: the coarse scan,
-    // bisection refinements, and culmination search below share this propagator.
-    let prop = Propagator::with_model(tle, model)?;
-
-    if is_geo_heuristic(tle) {
-        return predict_passes_geo(&prop, observer, window_start, window_end, min_elevation_deg);
-    }
-
-    let dt = coarse_step_for_mean_motion(tle.mean_motion);
-    let mut passes = Vec::new();
-
-    let mut prev_t = window_start;
-    let mut prev_el = elevation_deg(&prop, prev_t, observer)?;
-    let mut pending_aos: Option<DateTime<Utc>> = if prev_el >= min_elevation_deg {
-        Some(window_start)
-    } else {
-        None
-    };
-
-    let mut t = window_start + dt;
-    while t < window_end {
-        let el = elevation_deg(&prop, t, observer)?;
-
-        if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
-            let aos = bisect_elevation_rising(&prop, observer, min_elevation_deg, prev_t, t)?;
-            pending_aos = Some(aos);
-        } else if pending_aos.is_some() && prev_el >= min_elevation_deg && el < min_elevation_deg {
-            let aos = pending_aos.take().expect("aos");
-            let los = bisect_elevation_falling(&prop, observer, min_elevation_deg, prev_t, t)?;
-            if los > aos {
-                let (culm, max_el) = culmination_time_and_max_el(&prop, observer, aos, los)?;
-                let la_aos = prop.look_angles(aos, observer)?;
-                let la_los = prop.look_angles(los, observer)?;
-                passes.push(Pass {
-                    aos,
-                    culmination: culm,
-                    los,
-                    max_elevation_deg: max_el,
-                    aos_azimuth_deg: la_aos.azimuth_deg,
-                    los_azimuth_deg: la_los.azimuth_deg,
-                });
-            }
-        }
-
-        prev_t = t;
-        prev_el = el;
-        t += dt;
-    }
-
-    // Final segment up to exclusive window end.
-    let last_t = (window_end - Duration::milliseconds(1)).max(window_start);
-    if last_t > prev_t {
-        let el = elevation_deg(&prop, last_t, observer)?;
-        let opened_in_tail =
-            if pending_aos.is_none() && prev_el < min_elevation_deg && el >= min_elevation_deg {
-                pending_aos = Some(bisect_elevation_rising(
-                    &prop,
-                    observer,
-                    min_elevation_deg,
-                    prev_t,
-                    last_t,
-                )?);
-                true
-            } else {
-                false
-            };
-
-        if let Some(aos) = pending_aos {
-            if !opened_in_tail && prev_el >= min_elevation_deg && el < min_elevation_deg {
-                let los =
-                    bisect_elevation_falling(&prop, observer, min_elevation_deg, prev_t, last_t)?;
-                if los > aos {
-                    let (culm, max_el) = culmination_time_and_max_el(&prop, observer, aos, los)?;
-                    let la_aos = prop.look_angles(aos, observer)?;
-                    let la_los = prop.look_angles(los, observer)?;
-                    passes.push(Pass {
-                        aos,
-                        culmination: culm,
-                        los,
-                        max_elevation_deg: max_el,
-                        aos_azimuth_deg: la_aos.azimuth_deg,
-                        los_azimuth_deg: la_los.azimuth_deg,
-                    });
-                }
-            } else if el >= min_elevation_deg {
-                let los = window_end;
-                let los_sample = last_t;
-                let (culm, max_el) = culmination_time_and_max_el(&prop, observer, aos, los_sample)?;
-                let la_aos = prop.look_angles(aos, observer)?;
-                let la_los = prop.look_angles(los_sample, observer)?;
-                passes.push(Pass {
-                    aos,
-                    culmination: culm,
-                    los,
-                    max_elevation_deg: max_el,
-                    aos_azimuth_deg: la_aos.azimuth_deg,
-                    los_azimuth_deg: la_los.azimuth_deg,
-                });
-            }
-        }
-    }
-
-    Ok(passes)
+    // bisection refinements, and culmination search share this propagator.
+    Propagator::with_model(tle, model)?.predict_passes(
+        observer,
+        window_start,
+        window_end,
+        min_elevation_deg,
+    )
 }
 
 #[cfg(test)]
@@ -2633,5 +2907,347 @@ mod tests {
             (6_600.0..=7_100.0).contains(&radius_km),
             "ISS geocentric radius {radius_km:.1} km outside expected low-Earth-orbit band"
         );
+    }
+
+    // --- OMM propagation and Propagator-level searches ------------------------------------
+
+    /// The reference ISS element set as an OMM (CelesTrak JSON layout).
+    const ISS_OMM_JSON: &str = r#"{"OBJECT_NAME":"ISS (ZARYA)","OBJECT_ID":"1998-067A",
+        "EPOCH":"2020-07-12T21:16:01.000416","MEAN_MOTION":15.49507896,
+        "ECCENTRICITY":0.0001413,"INCLINATION":51.6461,"RA_OF_ASC_NODE":221.2784,
+        "ARG_OF_PERICENTER":89.1723,"MEAN_ANOMALY":280.4612,"EPHEMERIS_TYPE":0,
+        "CLASSIFICATION_TYPE":"U","NORAD_CAT_ID":25544,"ELEMENT_SET_NO":999,
+        "REV_AT_EPOCH":23600,"BSTAR":-0.31515E-4,"MEAN_MOTION_DOT":-0.2218E-4,
+        "MEAN_MOTION_DDOT":0}"#;
+
+    fn everett() -> ObserverLocation {
+        ObserverLocation {
+            latitude: 47.9088,
+            longitude: -122.2503,
+            elevation: 0.0,
+        }
+    }
+
+    fn position_gap_m(a: &TemeState, b: &TemeState) -> f64 {
+        (0..3)
+            .map(|i| (a.position_km[i] - b.position_km[i]).powi(2))
+            .sum::<f64>()
+            .sqrt()
+            * 1000.0
+    }
+
+    #[test]
+    fn omm_propagation_matches_tle_propagation_in_both_models() {
+        let tle = Tle::from_lines(Some(ISS_NAME), ISS_LINE1, ISS_LINE2).unwrap();
+        let omm = Omm::parse(ISS_OMM_JSON).unwrap();
+
+        for model in [
+            PropagationModel::Modern,
+            PropagationModel::AfspcCompatibility,
+        ] {
+            let from_tle = Propagator::with_model(&tle, model).unwrap();
+            let from_omm = Propagator::from_omm_with_model(&omm, model).unwrap();
+            assert_eq!(from_omm.model(), model);
+            for minutes in [-1440, -90, 0, 1, 45, 90, 720, 1440, 4320] {
+                let t = tle.epoch + Duration::minutes(minutes);
+                let a = from_tle.propagate(t).unwrap();
+                let b = from_omm.propagate(t).unwrap();
+                // The two epochs are rounded independently (TLE day fraction vs OMM
+                // microseconds); a microsecond of epoch is under a centimetre of orbit.
+                let gap = position_gap_m(&a, &b);
+                assert!(gap < 0.01, "{model:?} at {minutes} min: {gap} m apart");
+                for axis in 0..3 {
+                    assert!((a.velocity_km_s[axis] - b.velocity_km_s[axis]).abs() < 1e-8);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tle_converted_to_omm_propagates_like_the_tle() {
+        let tle = Tle::from_lines(Some(ISS_NAME), ISS_LINE1, ISS_LINE2).unwrap();
+        let omm = Omm::from(&tle);
+        let from_tle = Propagator::new(&tle).unwrap();
+        let from_omm = Propagator::from_omm(&omm).unwrap();
+        for minutes in [0, 90, 1440] {
+            let t = tle.epoch + Duration::minutes(minutes);
+            let gap = position_gap_m(
+                &from_tle.propagate(t).unwrap(),
+                &from_omm.propagate(t).unwrap(),
+            );
+            assert!(gap < 1e-3, "{minutes} min: {gap} m apart");
+        }
+    }
+
+    #[test]
+    fn omm_without_catalog_number_or_name_propagates() {
+        let omm = Omm::parse(
+            r#"{"EPOCH":"2020-07-12T21:16:01.000416","MEAN_MOTION":15.49507896,
+                "ECCENTRICITY":0.0001413,"INCLINATION":51.6461,"RA_OF_ASC_NODE":221.2784,
+                "ARG_OF_PERICENTER":89.1723,"MEAN_ANOMALY":280.4612,"BSTAR":-0.31515E-4}"#,
+        )
+        .unwrap();
+        assert_eq!(omm.catalog_number, None);
+        let state = Propagator::from_omm(&omm)
+            .unwrap()
+            .propagate(omm.epoch)
+            .unwrap();
+        let reference = Propagator::from_omm(&Omm::parse(ISS_OMM_JSON).unwrap())
+            .unwrap()
+            .propagate(omm.epoch)
+            .unwrap();
+        // Identity fields and the unused mean-motion derivatives do not enter the physics.
+        assert_eq!(state, reference);
+    }
+
+    #[test]
+    fn omm_that_sgp4_cannot_initialise_is_an_error_not_a_panic() {
+        // 20 rev/day puts the whole orbit inside the Earth; the elements parse (each is in
+        // range on its own) but the propagator must refuse them or fail to propagate.
+        let omm = Omm::parse(&ISS_OMM_JSON.replace("15.49507896", "20.0")).unwrap();
+        let outcome = Propagator::from_omm(&omm).and_then(|p| p.propagate(omm.epoch));
+        match outcome {
+            Err(AstroError::SatelliteError(_)) => {}
+            Ok(state) => {
+                let r = state.position_km;
+                let radius = (r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).sqrt();
+                assert!(radius < 6_378.0, "unexpected radius {radius} km");
+            }
+            Err(other) => panic!("unexpected error kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn propagator_predict_passes_equals_the_free_function() {
+        let tle = Tle::from_lines(Some(ISS_NAME), ISS_LINE1, ISS_LINE2).unwrap();
+        let (start, end) = (tle.epoch, tle.epoch + Duration::hours(24));
+        for model in [
+            PropagationModel::Modern,
+            PropagationModel::AfspcCompatibility,
+        ] {
+            let free = predict_passes_with_model(&tle, everett(), start, end, 10.0, model).unwrap();
+            let method = Propagator::with_model(&tle, model)
+                .unwrap()
+                .predict_passes(everett(), start, end, 10.0)
+                .unwrap();
+            assert!(!free.is_empty());
+            assert_eq!(free, method);
+        }
+    }
+
+    #[test]
+    fn omm_passes_match_tle_passes() {
+        let tle = Tle::from_lines(Some(ISS_NAME), ISS_LINE1, ISS_LINE2).unwrap();
+        let omm = Omm::parse(ISS_OMM_JSON).unwrap();
+        let (start, end) = (tle.epoch, tle.epoch + Duration::hours(24));
+
+        let from_tle = predict_passes(&tle, everett(), start, end, 10.0).unwrap();
+        let from_omm = Propagator::from_omm(&omm)
+            .unwrap()
+            .predict_passes(everett(), start, end, 10.0)
+            .unwrap();
+
+        assert_eq!(from_tle.len(), from_omm.len());
+        for (a, b) in from_tle.iter().zip(&from_omm) {
+            for (ta, tb) in [
+                (a.aos, b.aos),
+                (a.culmination, b.culmination),
+                (a.los, b.los),
+            ] {
+                let ms = (ta - tb).num_milliseconds().abs();
+                assert!(ms <= 5, "pass times differ by {ms} ms");
+            }
+            assert!((a.max_elevation_deg - b.max_elevation_deg).abs() < 1e-4);
+            assert!((a.aos_azimuth_deg - b.aos_azimuth_deg).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn one_propagator_serves_several_stations() {
+        let omm = Omm::parse(ISS_OMM_JSON).unwrap();
+        let prop = Propagator::from_omm(&omm).unwrap();
+        let (start, end) = (omm.epoch, omm.epoch + Duration::hours(24));
+
+        let stations = [
+            everett(),
+            ObserverLocation {
+                latitude: -33.8688,
+                longitude: 151.2093,
+                elevation: 20.0,
+            },
+            // Too far north for a 51.6° orbit to clear a 10° mask.
+            ObserverLocation {
+                latitude: 78.2298,
+                longitude: 15.4078,
+                elevation: 450.0,
+            },
+        ];
+        let counts: Vec<usize> = stations
+            .iter()
+            .map(|s| prop.predict_passes(*s, start, end, 10.0).unwrap().len())
+            .collect();
+        assert!(counts[0] > 0 && counts[1] > 0, "counts: {counts:?}");
+        assert_eq!(counts[2], 0);
+
+        // Reusing the propagator gives the same answer as a fresh one per station.
+        let fresh = Propagator::from_omm(&omm)
+            .unwrap()
+            .predict_passes(stations[1], start, end, 10.0)
+            .unwrap();
+        assert_eq!(fresh.len(), counts[1]);
+    }
+
+    #[test]
+    fn propagator_predict_passes_empty_or_reversed_window() {
+        let prop = Propagator::from_omm(&Omm::parse(ISS_OMM_JSON).unwrap()).unwrap();
+        let t = Utc.with_ymd_and_hms(2020, 7, 12, 22, 0, 0).unwrap();
+        assert!(
+            prop.predict_passes(everett(), t, t, 10.0)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            prop.predict_passes(everett(), t, t - Duration::hours(1), 10.0)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn propagator_ground_track_equals_the_free_function() {
+        let tle = Tle::from_lines(Some(ISS_NAME), ISS_LINE1, ISS_LINE2).unwrap();
+        let (start, end) = (tle.epoch, tle.epoch + Duration::minutes(95));
+        let step = Duration::seconds(30);
+
+        let free = ground_track(&tle, start, end, step).unwrap();
+        let method = Propagator::new(&tle)
+            .unwrap()
+            .ground_track(start, end, step)
+            .unwrap();
+        assert_eq!(free.len(), 190);
+        assert_eq!(free, method);
+
+        let prop = Propagator::new(&tle).unwrap();
+        assert!(prop.ground_track(start, end, Duration::zero()).is_err());
+        assert!(prop.ground_track(end, start, step).unwrap().is_empty());
+    }
+
+    // --- Alpha-5 catalog numbers ----------------------------------------------------------
+
+    /// Rewrites the catalog-number columns (3–7) of a data line and repairs its check digit.
+    fn with_catalog_field(line: &str, field: &str) -> String {
+        assert_eq!(field.len(), 5);
+        let body = format!("{}{}{}", &line[..2], field, &line[7..68]);
+        format!("{body}{}", tle_checksum(&body))
+    }
+
+    #[test]
+    fn alpha5_decoding_table() {
+        assert_eq!(decode_catalog_number("25544"), Some(25_544));
+        assert_eq!(decode_catalog_number("00005"), Some(5));
+        assert_eq!(decode_catalog_number("    5"), Some(5));
+        assert_eq!(decode_catalog_number("99999"), Some(99_999));
+        assert_eq!(decode_catalog_number("A0000"), Some(100_000));
+        assert_eq!(decode_catalog_number("A1744"), Some(101_744));
+        assert_eq!(decode_catalog_number("H9999"), Some(179_999));
+        // I is skipped: J follows H.
+        assert_eq!(decode_catalog_number("J0000"), Some(180_000));
+        assert_eq!(decode_catalog_number("N9999"), Some(229_999));
+        // O is skipped: P follows N.
+        assert_eq!(decode_catalog_number("P0000"), Some(230_000));
+        assert_eq!(decode_catalog_number("Z9999"), Some(339_999));
+
+        for bad in [
+            "I0000", "O0000", "a0000", "A000", "A00000", "AA000", "A 000", "", "-1234",
+        ] {
+            assert_eq!(decode_catalog_number(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn parses_and_propagates_an_alpha5_tle() {
+        let line1 = with_catalog_field(ISS_LINE1, "A1744");
+        let line2 = with_catalog_field(ISS_LINE2, "A1744");
+        let tle = Tle::from_lines(Some("NEW OBJECT"), &line1, &line2).expect("Alpha-5 TLE");
+        assert_eq!(tle.catalog_number, 101_744);
+
+        // The propagation engine reads the same field and must accept it too.
+        let state = propagate(&tle, tle.epoch).expect("propagates");
+        let reference = propagate(
+            &Tle::from_lines(None, ISS_LINE1, ISS_LINE2).unwrap(),
+            tle.epoch,
+        )
+        .unwrap();
+        assert_eq!(state, reference);
+
+        assert_eq!(Omm::from(&tle).catalog_number, Some(101_744));
+    }
+
+    #[test]
+    fn alpha5_mismatch_and_invalid_letters_are_reported() {
+        let line1 = with_catalog_field(ISS_LINE1, "A1744");
+        let line2 = with_catalog_field(ISS_LINE2, "B1744");
+        let err = Tle::from_lines(None, &line1, &line2).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AstroError::Tle(TleError::CatalogMismatch {
+                    line1: 101_744,
+                    line2: 111_744
+                })
+            ),
+            "unexpected error: {err:?}"
+        );
+
+        let line1 = with_catalog_field(ISS_LINE1, "I1744");
+        let line2 = with_catalog_field(ISS_LINE2, "I1744");
+        let err = Tle::from_lines(None, &line1, &line2).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                AstroError::Tle(TleError::Field {
+                    line: 1,
+                    start: 3,
+                    end: 7,
+                    ..
+                })
+            ),
+            "unexpected error: {err:?}"
+        );
+        assert!(err.to_string().contains("Alpha-5"), "{err}");
+    }
+
+    #[test]
+    fn select_tle_matches_alpha5_entries_by_number() {
+        let bulletin = format!(
+            "ISS (ZARYA)\n{ISS_LINE1}\n{ISS_LINE2}\nNEW OBJECT\n{}\n{}\n{}\n{}\n",
+            with_catalog_field(ISS_LINE1, "A1744"),
+            with_catalog_field(ISS_LINE2, "A1744"),
+            // An unnamed Alpha-5 entry.
+            with_catalog_field(ISS_LINE1, "Z9999"),
+            with_catalog_field(ISS_LINE2, "Z9999"),
+        );
+        assert_eq!(
+            select_tle(&bulletin, Some("101744"))
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("NEW OBJECT")
+        );
+        assert_eq!(
+            select_tle(&bulletin, Some("339999"))
+                .unwrap()
+                .catalog_number,
+            339_999
+        );
+        assert_eq!(
+            select_tle(&bulletin, Some("25544")).unwrap().catalog_number,
+            25_544
+        );
+        // Unnamed entries are listed by their decoded number.
+        let err = select_tle(&bulletin, Some("hubble"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("catalog 339999"), "{err}");
     }
 }

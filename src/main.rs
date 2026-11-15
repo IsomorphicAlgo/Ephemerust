@@ -78,22 +78,24 @@ enum Commands {
         #[arg(long, default_value_t = 398600.4418)]
         mu: f64,
     },
-    /// Satellite tracking from a TLE (see docs/satellite-tracking-plan.md)
+    /// Satellite tracking from a TLE or an OMM (see docs/satellite-tracking-plan.md, docs/omm.md)
     Track {
-        /// Path to a file containing a TLE (2- or 3-line element set)
-        #[arg(short = 'f', long)]
+        /// Path to a file containing a TLE (2- or 3-line element set) or an OMM (JSON, KVN,
+        /// XML or CSV); the format is detected from the content
+        #[arg(short = 'f', long, visible_alias = "omm-file")]
         tle_file: Option<String>,
-        /// Inline TLE text (quote the two/three lines; preserve line breaks)
-        #[arg(short = 't', long)]
+        /// Inline TLE text (quote the two/three lines; preserve line breaks) or inline OMM text
+        #[arg(short = 't', long, visible_alias = "omm")]
         tle: Option<String>,
-        /// Fetch element-set text from this HTTPS URL (e.g. a CelesTrak bulletin; requires
-        /// `--features network`). Bounded fetch: no retries — respect provider rate guidance.
+        /// Fetch element-set text (TLE or OMM) from this HTTPS URL (e.g. a CelesTrak query;
+        /// requires `--features network`). Bounded fetch: no retries — respect provider rate
+        /// guidance.
         #[cfg_attr(not(feature = "network"), arg(skip))]
-        #[cfg_attr(feature = "network", arg(long = "tle-url"))]
+        #[cfg_attr(feature = "network", arg(long = "tle-url", visible_alias = "omm-url"))]
         tle_url: Option<String>,
-        /// Select one object from a multi-TLE source by case-insensitive name substring,
+        /// Select one object from a multi-object source by case-insensitive name substring,
         /// or by exact NORAD catalog number (e.g. `--tle-name zarya` or `--tle-name 25544`)
-        #[arg(long = "tle-name")]
+        #[arg(long = "tle-name", visible_alias = "name")]
         tle_name: Option<String>,
         /// What to print: `all` (default), `tle` summary only, `state`, `subpoint`, `look`,
         /// `passes` (requires `--predict-passes-hours` > 0), or `ground` (requires `--ground-track-hours` > 0)
@@ -131,10 +133,10 @@ enum Commands {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum, Default)]
 enum TrackMode {
-    /// TLE summary, state, subpoint, look angles, and optional passes / ground track
+    /// Element-set summary, state, subpoint, look angles, and optional passes / ground track
     #[default]
     All,
-    /// Parsed TLE metadata only
+    /// Parsed element-set metadata only (TLE or OMM)
     Tle,
     /// TEME position and velocity at element-set epoch
     State,
@@ -355,7 +357,7 @@ fn run() -> Result<()> {
 #[derive(Serialize)]
 struct TleSummaryJson {
     name: Option<String>,
-    catalog_number: u32,
+    catalog_number: Option<u32>,
     classification: char,
     international_designator: String,
     epoch_rfc3339: String,
@@ -381,6 +383,9 @@ struct ObserverJson {
 
 #[derive(Serialize)]
 struct TrackJsonOutput {
+    /// `"tle"` or `"omm"`: the format the element set arrived in.
+    element_set_format: &'static str,
+    /// Element-set summary. The key is `tle` for both formats (it predates OMM support).
     #[serde(skip_serializing_if = "Option::is_none")]
     tle: Option<TleSummaryJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -410,7 +415,7 @@ struct TrackJsonOutput {
 fn tle_summary_json(tle: &ephemerust::satellite::Tle) -> TleSummaryJson {
     TleSummaryJson {
         name: tle.name.clone(),
-        catalog_number: tle.catalog_number,
+        catalog_number: Some(tle.catalog_number),
         classification: tle.classification,
         international_designator: tle.international_designator.clone(),
         epoch_rfc3339: tle
@@ -430,7 +435,93 @@ fn tle_summary_json(tle: &ephemerust::satellite::Tle) -> TleSummaryJson {
     }
 }
 
+fn omm_summary_json(omm: &ephemerust::omm::Omm) -> TleSummaryJson {
+    TleSummaryJson {
+        name: omm.name.clone(),
+        catalog_number: omm.catalog_number,
+        classification: omm.classification,
+        international_designator: omm.international_designator.clone().unwrap_or_default(),
+        epoch_rfc3339: omm
+            .epoch
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        mean_motion_dot: omm.mean_motion_dot,
+        mean_motion_ddot: omm.mean_motion_ddot,
+        bstar: omm.bstar,
+        element_set_number: omm.element_set_number,
+        inclination_deg: omm.inclination_deg,
+        raan_deg: omm.raan_deg,
+        eccentricity: omm.eccentricity,
+        arg_perigee_deg: omm.arg_perigee_deg,
+        mean_anomaly_deg: omm.mean_anomaly_deg,
+        mean_motion: omm.mean_motion,
+        revolution_number: omm.revolution_number,
+    }
+}
+
+/// The element set `track` was given, in whichever format it arrived.
+///
+/// Both formats describe the same SGP4 mean elements, so everything after parsing runs through
+/// a [`Propagator`](ephemerust::Propagator) and does not care which one this is.
+enum ElementSet {
+    Tle(ephemerust::satellite::Tle),
+    Omm(ephemerust::omm::Omm, ephemerust::omm::OmmFormat),
+}
+
+impl ElementSet {
+    fn epoch(&self) -> chrono::DateTime<chrono::Utc> {
+        match self {
+            ElementSet::Tle(tle) => tle.epoch,
+            ElementSet::Omm(omm, _) => omm.epoch,
+        }
+    }
+
+    fn format_label(&self) -> &'static str {
+        match self {
+            ElementSet::Tle(_) => "tle",
+            ElementSet::Omm(..) => "omm",
+        }
+    }
+
+    /// Initializes SGP4 for this element set.
+    fn propagator(
+        &self,
+        model: ephemerust::satellite::PropagationModel,
+    ) -> Result<ephemerust::Propagator> {
+        match self {
+            ElementSet::Tle(tle) => ephemerust::Propagator::with_model(tle, model),
+            ElementSet::Omm(omm, _) => ephemerust::Propagator::from_omm_with_model(omm, model),
+        }
+    }
+
+    fn summary_json(&self) -> TleSummaryJson {
+        match self {
+            ElementSet::Tle(tle) => tle_summary_json(tle),
+            ElementSet::Omm(omm, _) => omm_summary_json(omm),
+        }
+    }
+
+    fn print_summary(&self) {
+        match self {
+            ElementSet::Tle(tle) => print_tle_summary(tle),
+            ElementSet::Omm(omm, format) => print_omm_summary(omm, *format),
+        }
+    }
+}
+
 /// Parses element-set text from any `track` source, honoring `--tle-name` selection.
+///
+/// Text that [`OmmFormat::detect`](ephemerust::omm::OmmFormat::detect) recognises is read as
+/// an OMM through [`select_omm`](ephemerust::omm::select_omm), which handles one message or
+/// many and lists the available objects when a selector is needed. Everything else is a TLE.
+fn parse_element_text(text: &str, selector: Option<&str>) -> Result<ElementSet> {
+    if let Some(format) = ephemerust::omm::OmmFormat::detect(text) {
+        let omm = ephemerust::omm::select_omm(text, selector)?;
+        return Ok(ElementSet::Omm(omm, format));
+    }
+    parse_tle_text(text, selector).map(ElementSet::Tle)
+}
+
+/// Parses TLE text, honoring `--tle-name` selection.
 ///
 /// Single-object text without a selector keeps the exact [`Tle::parse`] behavior (and its
 /// teaching-oriented diagnostics). Multi-object bulletins — the norm for URLs and catalog
@@ -454,7 +545,7 @@ fn resolve_tle_input(
     tle: Option<String>,
     tle_url: Option<String>,
     tle_name: Option<String>,
-) -> Result<ephemerust::satellite::Tle> {
+) -> Result<ElementSet> {
     #[cfg(feature = "network")]
     const TLE_ONE_OF: &str = "provide exactly one of --tle-file, --tle, or --tle-url";
     #[cfg(not(feature = "network"))]
@@ -478,7 +569,7 @@ fn resolve_tle_input(
         {
             log::info!("track: fetching element sets from {url}");
             let text = ephemerust::net::fetch_tle_text(&url)?;
-            return parse_tle_text(&text, selector);
+            return parse_element_text(&text, selector);
         }
         #[cfg(not(feature = "network"))]
         {
@@ -491,9 +582,9 @@ fn resolve_tle_input(
     match (tle_file, tle) {
         (Some(path), None) => {
             let text = std::fs::read_to_string(&path)?;
-            parse_tle_text(&text, selector)
+            parse_element_text(&text, selector)
         }
-        (None, Some(text)) => parse_tle_text(&text, selector),
+        (None, Some(text)) => parse_element_text(&text, selector),
         _ => Err(ephemerust::AstroError::SatelliteError(
             "internal: TLE source resolution".into(),
         )),
@@ -519,11 +610,7 @@ fn run_track(
 ) -> Result<()> {
     use chrono::Duration;
     use ephemerust::celestial::ObserverLocation;
-    use ephemerust::satellite::{
-        PropagationModel, Tle, ground_track_to_csv, ground_track_to_json, ground_track_with_model,
-        look_angles_with_model, predict_passes_with_model, propagate_with_model,
-        subpoint_with_model,
-    };
+    use ephemerust::satellite::{PropagationModel, ground_track_to_csv, ground_track_to_json};
 
     let model = if afspc {
         PropagationModel::AfspcCompatibility
@@ -551,7 +638,11 @@ fn run_track(
         ));
     }
 
-    let parsed: Tle = resolve_tle_input(tle_file, tle, tle_url, tle_name)?;
+    let parsed = resolve_tle_input(tle_file, tle, tle_url, tle_name)?;
+    let epoch = parsed.epoch();
+    // SGP4 is initialized where a result needs it, so a summary-only request still works for
+    // an element set that parses but cannot be propagated.
+    let prop = || parsed.propagator(model);
     if afspc {
         log::info!("track: using AFSPC compatibility propagation (WGS72 + legacy sidereal/epoch)");
     }
@@ -564,6 +655,7 @@ fn run_track(
     match format {
         TrackFormat::Json => {
             let mut out = TrackJsonOutput {
+                element_set_format: parsed.format_label(),
                 tle: None,
                 observer: None,
                 state: None,
@@ -593,7 +685,7 @@ fn run_track(
                     | TrackMode::Ground
             );
             if include_tle {
-                out.tle = Some(tle_summary_json(&parsed));
+                out.tle = Some(parsed.summary_json());
             }
 
             match mode {
@@ -606,7 +698,7 @@ fn run_track(
                 }
                 TrackMode::State => {
                     set_propagation_meta(&mut out);
-                    out.state = Some(propagate_with_model(&parsed, parsed.epoch, model)?);
+                    out.state = Some(prop()?.propagate(epoch)?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
                     })?;
@@ -615,7 +707,7 @@ fn run_track(
                 }
                 TrackMode::Subpoint => {
                     set_propagation_meta(&mut out);
-                    out.subpoint = Some(subpoint_with_model(&parsed, parsed.epoch, model)?);
+                    out.subpoint = Some(prop()?.subpoint(epoch)?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
                     })?;
@@ -629,8 +721,7 @@ fn run_track(
                         longitude_deg: obs.longitude,
                         elevation_m: obs.elevation,
                     });
-                    out.look_angles =
-                        Some(look_angles_with_model(&parsed, parsed.epoch, obs, model)?);
+                    out.look_angles = Some(prop()?.look_angles(epoch, obs)?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
                     })?;
@@ -639,7 +730,7 @@ fn run_track(
                 }
                 TrackMode::Passes => {
                     set_propagation_meta(&mut out);
-                    let win_end = parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
+                    let win_end = epoch + Duration::hours(i64::from(predict_passes_hours));
                     out.observer = Some(ObserverJson {
                         latitude_deg: obs.latitude,
                         longitude_deg: obs.longitude,
@@ -647,13 +738,11 @@ fn run_track(
                     });
                     out.predict_passes_hours = Some(predict_passes_hours);
                     out.pass_min_elevation_deg = Some(pass_min_elevation_deg);
-                    out.passes = Some(predict_passes_with_model(
-                        &parsed,
+                    out.passes = Some(prop()?.predict_passes(
                         obs,
-                        parsed.epoch,
+                        epoch,
                         win_end,
                         pass_min_elevation_deg,
-                        model,
                     )?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
@@ -668,7 +757,7 @@ fn run_track(
                             "--ground-track-step-sec must be at least 1".into(),
                         ));
                     }
-                    let win_end = parsed.epoch + Duration::hours(i64::from(ground_track_hours));
+                    let win_end = epoch + Duration::hours(i64::from(ground_track_hours));
                     let step =
                         Duration::seconds(i64::try_from(ground_track_step_sec).map_err(|_| {
                             ephemerust::AstroError::SatelliteError(
@@ -677,13 +766,7 @@ fn run_track(
                         })?);
                     out.ground_track_hours = Some(ground_track_hours);
                     out.ground_track_step_sec = Some(ground_track_step_sec);
-                    out.ground_track = Some(ground_track_with_model(
-                        &parsed,
-                        parsed.epoch,
-                        win_end,
-                        step,
-                        model,
-                    )?);
+                    out.ground_track = Some(prop()?.ground_track(epoch, win_end, step)?);
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
                     })?;
@@ -697,22 +780,18 @@ fn run_track(
                         longitude_deg: obs.longitude,
                         elevation_m: obs.elevation,
                     });
-                    out.state = Some(propagate_with_model(&parsed, parsed.epoch, model)?);
-                    out.subpoint = Some(subpoint_with_model(&parsed, parsed.epoch, model)?);
-                    out.look_angles =
-                        Some(look_angles_with_model(&parsed, parsed.epoch, obs, model)?);
+                    out.state = Some(prop()?.propagate(epoch)?);
+                    out.subpoint = Some(prop()?.subpoint(epoch)?);
+                    out.look_angles = Some(prop()?.look_angles(epoch, obs)?);
                     if predict_passes_hours > 0 {
-                        let win_end =
-                            parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
+                        let win_end = epoch + Duration::hours(i64::from(predict_passes_hours));
                         out.predict_passes_hours = Some(predict_passes_hours);
                         out.pass_min_elevation_deg = Some(pass_min_elevation_deg);
-                        out.passes = Some(predict_passes_with_model(
-                            &parsed,
+                        out.passes = Some(prop()?.predict_passes(
                             obs,
-                            parsed.epoch,
+                            epoch,
                             win_end,
                             pass_min_elevation_deg,
-                            model,
                         )?);
                     }
                     if ground_track_hours > 0 {
@@ -721,7 +800,7 @@ fn run_track(
                                 "--ground-track-step-sec must be at least 1".into(),
                             ));
                         }
-                        let win_end = parsed.epoch + Duration::hours(i64::from(ground_track_hours));
+                        let win_end = epoch + Duration::hours(i64::from(ground_track_hours));
                         let step = Duration::seconds(
                             i64::try_from(ground_track_step_sec).map_err(|_| {
                                 ephemerust::AstroError::SatelliteError(
@@ -732,13 +811,7 @@ fn run_track(
                         );
                         out.ground_track_hours = Some(ground_track_hours);
                         out.ground_track_step_sec = Some(ground_track_step_sec);
-                        out.ground_track = Some(ground_track_with_model(
-                            &parsed,
-                            parsed.epoch,
-                            win_end,
-                            step,
-                            model,
-                        )?);
+                        out.ground_track = Some(prop()?.ground_track(epoch, win_end, step)?);
                     }
                     let s = serde_json::to_string_pretty(&out).map_err(|e| {
                         ephemerust::AstroError::SatelliteError(format!("JSON: {e}"))
@@ -749,9 +822,9 @@ fn run_track(
             }
         }
         TrackFormat::Human => match mode {
-            TrackMode::Tle => print_tle_summary(&parsed),
+            TrackMode::Tle => parsed.print_summary(),
             TrackMode::State => {
-                let state = propagate_with_model(&parsed, parsed.epoch, model)?;
+                let state = prop()?.propagate(epoch)?;
                 println!("State at epoch (TEME frame):");
                 println!(
                     "  Position [km]:   x={:.3} y={:.3} z={:.3}",
@@ -763,14 +836,14 @@ fn run_track(
                 );
             }
             TrackMode::Subpoint => {
-                let sub = subpoint_with_model(&parsed, parsed.epoch, model)?;
+                let sub = prop()?.subpoint(epoch)?;
                 println!("Sub-satellite point at epoch (WGS84 geodetic):");
                 println!("  Latitude:  {:+.6}°", sub.latitude_deg);
                 println!("  Longitude: {:+.6}°", sub.longitude_deg);
                 println!("  Altitude:  {:.3} km (ellipsoidal)", sub.altitude_km);
             }
             TrackMode::Look => {
-                let look = look_angles_with_model(&parsed, parsed.epoch, obs, model)?;
+                let look = prop()?.look_angles(epoch, obs)?;
                 println!(
                     "Look angles at epoch (observer {:.4}° N, {:.4}° lon, WGS84 h = {:.0} m):",
                     obs.latitude, obs.longitude, obs.elevation
@@ -787,15 +860,8 @@ fn run_track(
                 );
             }
             TrackMode::Passes => {
-                let win_end = parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
-                let passes = predict_passes_with_model(
-                    &parsed,
-                    obs,
-                    parsed.epoch,
-                    win_end,
-                    pass_min_elevation_deg,
-                    model,
-                )?;
+                let win_end = epoch + Duration::hours(i64::from(predict_passes_hours));
+                let passes = prop()?.predict_passes(obs, epoch, win_end, pass_min_elevation_deg)?;
                 println!(
                     "Predicted passes ({} h from epoch, min elevation {:.1}°):",
                     predict_passes_hours, pass_min_elevation_deg
@@ -825,14 +891,14 @@ fn run_track(
                         "--ground-track-step-sec must be at least 1".into(),
                     ));
                 }
-                let win_end = parsed.epoch + Duration::hours(i64::from(ground_track_hours));
+                let win_end = epoch + Duration::hours(i64::from(ground_track_hours));
                 let step =
                     Duration::seconds(i64::try_from(ground_track_step_sec).map_err(|_| {
                         ephemerust::AstroError::SatelliteError(
                             "--ground-track-step-sec is too large for chrono::Duration".into(),
                         )
                     })?);
-                let samples = ground_track_with_model(&parsed, parsed.epoch, win_end, step, model)?;
+                let samples = prop()?.ground_track(epoch, win_end, step)?;
                 if ground_track_json {
                     println!("Ground track (JSON, {} samples):", samples.len());
                     println!("{}", ground_track_to_json(&samples)?);
@@ -847,10 +913,10 @@ fn run_track(
                 }
             }
             TrackMode::All => {
-                print_tle_summary(&parsed);
-                let state = propagate_with_model(&parsed, parsed.epoch, model)?;
-                let sub = subpoint_with_model(&parsed, parsed.epoch, model)?;
-                let look = look_angles_with_model(&parsed, parsed.epoch, obs, model)?;
+                parsed.print_summary();
+                let state = prop()?.propagate(epoch)?;
+                let sub = prop()?.subpoint(epoch)?;
+                let look = prop()?.look_angles(epoch, obs)?;
                 println!();
                 println!("State at epoch (TEME frame):");
                 println!(
@@ -882,15 +948,9 @@ fn run_track(
                     look.range_rate_km_s
                 );
                 if predict_passes_hours > 0 {
-                    let win_end = parsed.epoch + Duration::hours(i64::from(predict_passes_hours));
-                    let passes = predict_passes_with_model(
-                        &parsed,
-                        obs,
-                        parsed.epoch,
-                        win_end,
-                        pass_min_elevation_deg,
-                        model,
-                    )?;
+                    let win_end = epoch + Duration::hours(i64::from(predict_passes_hours));
+                    let passes =
+                        prop()?.predict_passes(obs, epoch, win_end, pass_min_elevation_deg)?;
                     println!();
                     println!(
                         "Predicted passes ({} h from epoch, min elevation {:.1}°):",
@@ -921,15 +981,14 @@ fn run_track(
                             "--ground-track-step-sec must be at least 1".into(),
                         ));
                     }
-                    let win_end = parsed.epoch + Duration::hours(i64::from(ground_track_hours));
+                    let win_end = epoch + Duration::hours(i64::from(ground_track_hours));
                     let step =
                         Duration::seconds(i64::try_from(ground_track_step_sec).map_err(|_| {
                             ephemerust::AstroError::SatelliteError(
                                 "--ground-track-step-sec is too large for chrono::Duration".into(),
                             )
                         })?);
-                    let samples =
-                        ground_track_with_model(&parsed, parsed.epoch, win_end, step, model)?;
+                    let samples = prop()?.ground_track(epoch, win_end, step)?;
                     println!();
                     if ground_track_json {
                         println!("Ground track (JSON, {} samples):", samples.len());
@@ -974,6 +1033,33 @@ fn print_tle_summary(tle: &ephemerust::satellite::Tle) {
     println!("Mean motion:   {:.8} rev/day", tle.mean_motion);
     println!("B* drag:       {:.6e} 1/earth-radii", tle.bstar);
     println!("Rev # @ epoch: {}", tle.revolution_number);
+}
+
+/// Prints the same summary for an OMM, headed by the serialization it arrived in.
+fn print_omm_summary(omm: &ephemerust::omm::Omm, format: ephemerust::omm::OmmFormat) {
+    println!("Element set:   OMM ({format})");
+    if let Some(name) = &omm.name {
+        println!("Object:        {}", name);
+    }
+    match omm.catalog_number {
+        Some(number) => println!("Catalog #:     {} ({})", number, omm.classification),
+        None => println!("Catalog #:     not cataloged ({})", omm.classification),
+    }
+    if let Some(designator) = &omm.international_designator {
+        println!("Intl. desig.:  {designator}");
+    }
+    println!(
+        "Epoch (UTC):   {}",
+        omm.epoch.format("%Y-%m-%d %H:%M:%S%.3f")
+    );
+    println!("Inclination:   {:.4}°", omm.inclination_deg);
+    println!("RAAN:          {:.4}°", omm.raan_deg);
+    println!("Eccentricity:  {:.7}", omm.eccentricity);
+    println!("Arg perigee:   {:.4}°", omm.arg_perigee_deg);
+    println!("Mean anomaly:  {:.4}°", omm.mean_anomaly_deg);
+    println!("Mean motion:   {:.8} rev/day", omm.mean_motion);
+    println!("B* drag:       {:.6e} 1/earth-radii", omm.bstar);
+    println!("Rev # @ epoch: {}", omm.revolution_number);
 }
 
 fn init_logging(verbose: bool) {

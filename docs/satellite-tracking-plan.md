@@ -395,6 +395,7 @@ M0–M9 scope. They are **not** blockers for the completed satellite-tracking mi
 | Item | Origin | Status / next step |
 |------|--------|-------------------|
 | **HTTP TLE fetch (`--tle-url`)** | M1 (deferred), M7 deliverable | ✅ **Implemented in 0.7.0** per [`http_plan.md`](../http_plan.md) (`src/net.rs`, `select_tle`/`--tle-name`, offline tests) |
+| **OMM input and catalog numbers above 99999** | Catalog rollover, July 2026 | ✅ Implemented for **1.2.0**: `src/omm.rs` (JSON/KVN/XML/CSV), `Propagator::from_omm`, Alpha-5 in `Tle`; see [`omm.md`](omm.md) |
 | **Space-Track authenticated fetch** | Out of scope for initial `--tle-url` | Separate compliance/API design if needed |
 | **Automated Skyfield / Heavens-Above validation** | M3–M5 test plans | In-tree plausibility + Vallado vectors; manual Astroviewer check in [`readme.md`](../readme.md); optional pinned external regression tests |
 | **M3 subpoint boundary tests** (equator, high inclination, ±180° lon) | M3 test plan | ✅ In-tree (`subpoint_*` tests in `satellite.rs`) |

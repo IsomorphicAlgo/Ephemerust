@@ -13,7 +13,7 @@
 //! cargo test --release --test pass_search_brute_force -- --ignored --nocapture
 //! ```
 //!
-//! Measured at 1.2.0: 7074 passes, none missed, none spurious, every AOS and LOS inside the
+//! Measured at 1.2.1: 7074 passes, none missed, none spurious, every AOS and LOS inside the
 //! one-second bracket the scan gives. The fixed-step search it replaced missed 231 of them
 //! (3.3 %), all shorter than its sampling step: 26 at masks of 0–10°, 41 at 30° and 164 at
 //! 60–80°, where every pass is short. `satellite::tests::finds_every_short_pass_a_one_second_scan_finds` is the

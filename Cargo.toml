@@ -1,6 +1,6 @@
 [package]
 name = "ephemerust"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2024"
 # MSRV: matches Chronus Gateway. Raising it is treated as a minor-version change (see readme
 # "Versioning"); CI builds on both this floor and the latest stable toolchain.

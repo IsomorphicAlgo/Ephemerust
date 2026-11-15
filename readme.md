@@ -97,12 +97,12 @@ project, which uses Ephemerust as a dependency; see the [roadmap](docs/roadmap.m
 | Planet rise/set                               | ✅ working                                                                          |
 | Satellite TLE → TEME → subpoint (WGS84)      | ✅ working (see [plan](docs/satellite-tracking-plan.md))                            |
 | Satellite look angles (TLE → observer)       | ✅ working (ENU / az–el–range–range-rate; see [plan](docs/satellite-tracking-plan.md)) |
-| Satellite pass prediction (`predict_passes`) | ✅ working (safe stepping + bisection; from **1.2.0** finds every pass of 1 s or longer in low orbit, checked against a brute-force scan; see [accuracy](docs/accuracy-and-limits.md)) |
+| Satellite pass prediction (`predict_passes`) | ✅ working (safe stepping + bisection; from **1.2.1** finds every pass of 1 s or longer in low orbit, checked against a brute-force scan; see [accuracy](docs/accuracy-and-limits.md)) |
 | Satellite ground track (sampled subpoint + CSV/JSON) | ✅ working (`ground_track`; see [plan](docs/satellite-tracking-plan.md)) |
 | Satellite plan (M0–M9) — library polish & teaching | ✅ **signed off** ([plan](docs/satellite-tracking-plan.md): track CLI, passes, ground track, JSON, `sgp4_teaching`, docs) |
 | Earth-shadow (eclipse) model                 | ✅ working (conical umbra/penumbra, `eclipse::shadow_state` + entry/exit search; since **0.7.0**) |
-| OMM element sets (`omm` module)              | ✅ planned for **1.2.0**, not yet on crates.io: JSON, KVN, XML and CSV; catalog numbers up to nine digits; within 0.024 mm of the reference C++ SGP4 ([omm](docs/omm.md)) |
-| Alpha-5 catalog numbers in TLEs              | ✅ planned for **1.2.0**: `A0000` = 100000 … `Z9999` = 339999 |
+| OMM element sets (`omm` module)              | ✅ new in **1.2.0**: JSON, KVN, XML and CSV; catalog numbers up to nine digits; within 0.024 mm of the reference C++ SGP4 ([omm](docs/omm.md)) |
+| Alpha-5 catalog numbers in TLEs              | ✅ new in **1.2.0**: `A0000` = 100000 … `Z9999` = 339999 |
 | Live TLE fetch (`--tle-url`, CelesTrak)      | ✅ working with `--features network` (bounded HTTPS client + `--tle-name` selection; see [http_plan.md](http_plan.md)) |
 | Atmospheric refraction (`refraction_deg`)    | ✅ new in **1.0.0** (Sæmundsson standard atmosphere, optional pressure/temperature) |
 | Earth orientation & frames (`frames`)        | ✅ new in **1.1.0** (UT1−UTC, polar motion, leap seconds; GCRF/EME2000/TEME ↔ ITRF with IAU 2006/2000B, within 7 cm of ERFA) |
@@ -110,7 +110,7 @@ project, which uses Ephemerust as a dependency; see the [roadmap](docs/roadmap.m
 
 ## Install & build
 
-From [crates.io](https://crates.io/crates/ephemerust) (release **1.1.2**):
+From [crates.io](https://crates.io/crates/ephemerust) (release **1.2.1**):
 
 ```bash
 cargo install ephemerust          # CLI binary on your PATH
@@ -286,7 +286,8 @@ The short version. Every entry, with the numbers behind it, lives in [CHANGELOG.
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| **1.2.0** | unreleased | **OMM support**: the `omm` module reads Orbit Mean-Elements Messages in JSON, KVN, XML and CSV, which is how objects numbered 100000 and above are published. `Propagator::from_omm`, plus `Propagator::predict_passes` and `ground_track` for multi-station work. TLEs with Alpha-5 catalog numbers parse. `track` accepts an OMM wherever it accepts a TLE. **Fixed:** `predict_passes` no longer misses passes shorter than its old 116 s sampling step (3.3 % of passes in a brute-force comparison). API additive only. |
+| **1.2.1** | 2026-11-14 | **Fixed:** `predict_passes` no longer misses passes shorter than its old sampling step (116 s for the ISS): 231 of 7074 passes, 3.3 %, in a one-second brute-force comparison, and now none. The search advances in safe steps that cannot skip a pass. Passes already found move by at most 1 ms. No API changes. |
+| **1.2.0** | 2026-11-14 | **OMM support**: the `omm` module reads Orbit Mean-Elements Messages in JSON, KVN, XML and CSV, which is how objects numbered 100000 and above are published. `Propagator::from_omm`, plus `Propagator::predict_passes` and `ground_track` for multi-station work. TLEs with Alpha-5 catalog numbers parse. `track` accepts an OMM wherever it accepts a TLE. Additive only. |
 | **1.1.2** | 2026-10-26 | Security patch: lockfile moves `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.11, clearing RUSTSEC-2026-0381 and 0382 (certificate-trust fixes; only compiled with the optional `network` feature). No API or numerical changes. |
 | **1.1.1** | 2026-10-19 | Security patch: lockfile moves `rustls` to 0.23.46, clearing RUSTSEC-2026-0346 to 0349 (only compiled with the optional `network` feature). Readme gains this changelog summary. No API or numerical changes. |
 | **1.1.0** | 2026-10-11 | New `frames` module: GCRF / EME2000 / TEME to ITRF with IAU 2006 precession, IAU 2000B nutation and polar motion. `EarthOrientation` input (UT1−UTC, pole offsets) and `Propagator::look_angles_with_eop`, which matches Skyfield to 0.04″ and 0.3 m. `topocentric_look_angles` for any Earth-fixed state. Additive only; the 1.0 API is unchanged. |

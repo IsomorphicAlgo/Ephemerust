@@ -14,9 +14,54 @@ version carried breaking changes.)
 
 ## [Unreleased]
 
-Planned as **1.2.0**. The API is additive only: the 1.1 API is unchanged. One result changes:
-`predict_passes` now returns short passes it used to miss (see **Fixed**). Everything else is
-numerically identical for TLE input.
+## [1.2.1] - 2026-11-14
+
+Patch release. No API changes. One result changes: `predict_passes` now returns short passes
+it used to miss. The start and end of passes it already found are unchanged to within 1 ms.
+
+### Fixed
+
+- **`predict_passes` could miss a pass shorter than its sampling step.** The search sampled
+  elevation at a fixed 1/48 of the orbital period (about 116 s for the ISS, up to 600 s for
+  eccentric orbits) and only noticed a pass if a sample landed inside it. Against a
+  one-second brute-force scan of ten element sets, five stations and six masks over ten days
+  it missed **231 of 7074 passes (3.3 %)**: 26 at masks of 0–10°, 41 at 30° and 164 at
+  60–80°, where every pass is short.
+  - The search now uses **safe steps**: from each sample it advances by no more than the
+    time for which the elevation provably cannot reach the mask (`Δt = ρ·(1 − e^(−gap))/v`,
+    from the range `ρ` and a bound `v` on the Earth-fixed speed). It cannot skip a pass
+    between samples, so every pass at least as long as the minimum step is found. The
+    minimum step is 1/5760 of the period, clamped to 1–15 s (1 s in low Earth orbit).
+  - On the same brute-force set it now finds **all 7074, with none spurious**, and every
+    AOS and LOS inside the scan's one-second bracket (`tests/pass_search_brute_force.rs`,
+    run with `--release -- --ignored`).
+  - **Size of the change for passes that were already found:** AOS and LOS move by at most
+    1 ms and maximum elevation by under 2×10⁻⁶ °. Culmination time, which is the top of a
+    flat curve, moves by up to 60 ms in low orbits and about 1.4 s in 12-hour orbits.
+  - Cost (criterion, new `predict_passes_24h_*` benchmarks: a day of ISS passes for one
+    station on a prebuilt `Propagator`): about 0.7 ms at a 10° mask before and after, within
+    run-to-run noise; **416 µs → 180 µs** at a 60° mask. Summed over the six masks of the
+    brute-force set, low orbits were 5–40 % faster, a Molniya search about 10 % slower and a
+    transfer-orbit search about 40 % slower (the old 600 s step was too coarse near perigee).
+    Near-geosynchronous sets still use the simplified model.
+  - A NaN elevation mask now returns no passes immediately.
+
+### Validation
+
+- New ignored test `tests/pass_search_brute_force.rs` (the one-second comparison above; about
+  43 million propagations, run with `cargo test --release --test pass_search_brute_force --
+  --ignored`), the fast regression test
+  `finds_every_short_pass_a_one_second_scan_finds`, and direct tests of the speed bound and
+  of the safe-step guarantee.
+- New criterion benchmarks `predict_passes_24h_mask10` and `predict_passes_24h_mask60`.
+- Tests with `--all-features`: 220 unit, 33 integration and 45 doc tests (212, 33 and 45 in
+  1.2.0).
+
+## [1.2.0] - 2026-11-14
+
+Additive only: the 1.1 API is unchanged, and so are all numerical
+results for TLE input (the `track` output for a TLE is byte-for-byte the same, apart from the
+one new JSON key noted below).
 
 ### Added
 
@@ -58,33 +103,6 @@ numerically identical for TLE input.
 - The error for an unreadable TLE catalog-number field now describes Alpha-5 as well as plain
   digits.
 
-### Fixed
-
-- **`predict_passes` could miss a pass shorter than its sampling step.** The search sampled
-  elevation at a fixed 1/48 of the orbital period (about 116 s for the ISS, up to 600 s for
-  eccentric orbits) and only noticed a pass if a sample landed inside it. Against a
-  one-second brute-force scan of ten element sets, five stations and six masks over ten days
-  it missed **231 of 7074 passes (3.3 %)**: 26 at masks of 0–10°, 41 at 30° and 164 at
-  60–80°, where every pass is short.
-  - The search now uses **safe steps**: from each sample it advances by no more than the
-    time for which the elevation provably cannot reach the mask (`Δt = ρ·(1 − e^(−gap))/v`,
-    from the range `ρ` and a bound `v` on the Earth-fixed speed). It cannot skip a pass
-    between samples, so every pass at least as long as the minimum step is found. The
-    minimum step is 1/5760 of the period, clamped to 1–15 s (1 s in low Earth orbit).
-  - On the same brute-force set it now finds **all 7074, with none spurious**, and every
-    AOS and LOS inside the scan's one-second bracket (`tests/pass_search_brute_force.rs`,
-    run with `--release -- --ignored`).
-  - **Size of the change for passes that were already found:** AOS and LOS move by at most
-    1 ms and maximum elevation by under 2×10⁻⁶ °. Culmination time, which is the top of a
-    flat curve, moves by up to 60 ms in low orbits and about 1.4 s in 12-hour orbits.
-  - Cost (criterion, new `predict_passes_24h_*` benchmarks: a day of ISS passes for one
-    station on a prebuilt `Propagator`): about 0.7 ms at a 10° mask before and after, within
-    run-to-run noise; **416 µs → 180 µs** at a 60° mask. Summed over the six masks of the
-    brute-force set, low orbits were 5–40 % faster, a Molniya search about 10 % slower and a
-    transfer-orbit search about 40 % slower (the old 600 s step was too coarse near perigee).
-    Near-geosynchronous sets still use the simplified model.
-  - A NaN elevation mask now returns no passes immediately.
-
 ### Validation
 
 - `tests/omm_reference.rs` compares OMM-driven propagation with python-sgp4 2.27 (the
@@ -95,8 +113,8 @@ numerically identical for TLE input.
 - An OMM and the TLE published for the same element set propagate to the same state (no
   difference for the CelesTrak sample). The test bound is 2 cm, to allow for the epoch, which
   the two formats round differently.
-- Tests with `--all-features`: 220 unit, 33 integration and 45 doc tests (149, 19 and 36 in
-  1.1.2), plus the ignored brute-force pass-search test.
+- Tests with `--all-features`: 212 unit, 33 integration and 45 doc tests (149, 19 and 36 in
+  1.1.2).
 
 ## [1.1.2] - 2026-10-26
 

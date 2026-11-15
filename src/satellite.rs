@@ -1873,7 +1873,7 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 
 /// Fixed sampling step for pass finding: 1/48 of the orbital period, clamped to 15–600 s.
 ///
-/// This was the only step before 1.2.0. It is now the fallback for element sets whose mean
+/// This was the only step before 1.2.1. It is now the fallback for element sets whose mean
 /// elements give no speed bound (see [`max_earth_fixed_speed_km_s`]); the normal path uses
 /// [`safe_step`].
 fn coarse_step_for_mean_motion(mean_motion_rev_per_day: f64) -> Duration {
@@ -2086,7 +2086,7 @@ fn culmination_time_and_max_el(
 /// pass at least as long as the minimum step is found**, including brief, grazing passes that
 /// barely clear the mask. The minimum step is 1/5760 of the orbital period, clamped to 1–15 s
 /// (1 s for low Earth orbit). Shorter passes may be missed; a pass that brief is comparable
-/// to the timing uncertainty of the element set itself. Releases before 1.2.0 sampled at a fixed
+/// to the timing uncertainty of the element set itself. Releases before 1.2.1 sampled at a fixed
 /// 1/48 of the period (about 116 s for the ISS) and could miss any pass shorter than that.
 ///
 /// Near-geosynchronous sets (≈1 rev/day, inclination under 3°, eccentricity under 0.02) use a
@@ -3539,7 +3539,7 @@ mod tests {
         runs
     }
 
-    /// Regression for the pre-1.2.0 search, which sampled every 116 s for the ISS and missed
+    /// Regression for the pre-1.2.1 search, which sampled every 116 s for the ISS and missed
     /// passes shorter than that. Each case holds a pass that fell between two of those samples:
     /// 36 s above 45° at Sydney, 2.5 h after epoch, and 27 s above 60° at Everett, 14.4 h after.
     #[test]
